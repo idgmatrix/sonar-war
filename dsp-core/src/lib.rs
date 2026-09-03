@@ -5,7 +5,7 @@
 //! 표적 신호 (토널 + DEMON 캐비테이션 + 도플러)
 //!   → 하이드로폰별 지연 (τᵢ = pᵢ·û/c, 명세서 §3.2)
 //!   → 지연-합 빔포밍 (메인 빔)
-//!   → + 해양 배경잡음 (Knudsen C₀)
+//!   → + 해양 배경잡음 (Coates/Wenz 네 성분 기준선)
 //!   → 소프트 클립 (tanh — 수신기 동역학 압축)
 //! ```
 //!
@@ -334,6 +334,20 @@ mod tests {
         buf
     }
 
+    /// 동일 seed의 무표적 엔진 출력을 빼서 표적 성분만 관찰한다.
+    /// 환경음 모델 변경이 Source/Propagation 회귀 테스트를 가리지 않게 한다.
+    fn process_target_component(targets: &[f32], warmup: usize, n: usize) -> Vec<f32> {
+        let mut scene = engine_with_targets(targets);
+        let mut ambient = engine_with_targets(&[]);
+        let _ = process_block(&mut scene, warmup);
+        let _ = process_block(&mut ambient, warmup);
+        process_block(&mut scene, n)
+            .into_iter()
+            .zip(process_block(&mut ambient, n))
+            .map(|(mixed, noise)| mixed - noise)
+            .collect()
+    }
+
     fn rms(buf: &[f32]) -> f32 {
         (buf.iter().map(|s| s * s).sum::<f32>() / buf.len() as f32).sqrt()
     }
@@ -344,8 +358,7 @@ mod tests {
 
     #[test]
     fn process_produces_signal_with_target() {
-        // 근접+대음량 표적 — 정확한 TL에서 잡음 바닥(≈7e-4)보다 확실히 위여야
-        // "표적이 신호를 만든다"고 검증할 수 있다 (원거리 저 SL 표적은 잡음에 매몰).
+        // 근접+대음량 표적이 혼합 출력에 유의미한 신호를 만드는지 확인한다.
         let mut e = engine_with_targets(&[45.0, 1000.0, 50.0, 90.0, 5.0, 150.0, 0.3, 5.0]);
         let _ = process_block(&mut e, 4096); // 빔포머 링 버퍼 채우는 과도 구간 스킵
         let buf = process_block(&mut e, 4096);
@@ -354,47 +367,36 @@ mod tests {
 
     #[test]
     fn farther_target_is_quieter() {
-        // 150dB로 — 정확한 TL에서 8km 표적이 잡음 바닥(≈7e-4) 아래로 가면
-        // 비도가 잡음에 의해 결정되어 근/원 거리비가 무너진다.
+        // 동일 환경 잡음을 상쇄하고 표적 성분의 거리 감쇠만 비교한다.
         let near = [0.0, 1000.0, 30.0, 90.0, 5.0, 150.0, 0.0, 0.0];
         let far = [0.0, 8000.0, 30.0, 90.0, 5.0, 150.0, 0.0, 0.0];
-        let mut en = engine_with_targets(&near);
-        let mut ef = engine_with_targets(&far);
-        // 빔포머 링 버퍼 채워지는 과도 구간 스킵
-        let _ = process_block(&mut en, 4096);
-        let _ = process_block(&mut ef, 4096);
-        let rn = rms(&process_block(&mut en, 8192));
-        let rf = rms(&process_block(&mut ef, 8192));
+        let rn = rms(&process_target_component(&near, 4096, 8192));
+        let rf = rms(&process_target_component(&far, 4096, 8192));
         assert!(rn > rf * 3.0, "near={rn} far={rf}");
     }
 
     #[test]
     fn higher_rpm_raises_tonal_frequency() {
         // rpm 120/5블레이드(10Hz) vs 40/5(3.33Hz) — 제로크로스 수 비교.
-        // 정확한 TL(1km≈60dB)에서 토널이 잡음 바닥(~7e-4)을 확실히 압도해야
-        // 제로크로스가 토널 주파수를 따라감 → SL을 충분히 높임.
+        // 동일 환경 잡음을 상쇄한 뒤 제로크로스가 토널 주파수를 따라가는지 본다.
         // 고조파(5개, −6dB/개)는 두 신호 모두에 기본파보다 큰 크로스 수를 더해
         // 기본파 3:1 갭이 제로크로스 비율로는 ~1.5로 압축됨 (측정 ≈1.48).
         // 임계는 1.3 — 잡음/고조파에 무관하게 "더 높은 주파수"를 단단히 가리키되
         // 고조파 압축을 감안해 여유를 둔 값.
-        let mut e_hi = engine_with_targets(&[0.0, 1000.0, 30.0, 120.0, 5.0, 155.0, 0.0, 0.0]);
-        let mut e_lo = engine_with_targets(&[0.0, 1000.0, 30.0, 40.0, 5.0, 155.0, 0.0, 0.0]);
-        let _ = process_block(&mut e_hi, 4096);
-        let _ = process_block(&mut e_lo, 4096);
-        let hi = zero_crossings(&process_block(&mut e_hi, 131072));
-        let lo = zero_crossings(&process_block(&mut e_lo, 131072));
+        let hi_scene = [0.0, 1000.0, 30.0, 120.0, 5.0, 155.0, 0.0, 0.0];
+        let lo_scene = [0.0, 1000.0, 30.0, 40.0, 5.0, 155.0, 0.0, 0.0];
+        let hi = zero_crossings(&process_target_component(&hi_scene, 4096, 131072));
+        let lo = zero_crossings(&process_target_component(&lo_scene, 4096, 131072));
         assert!(hi * 10 > lo * 13, "hi={hi} lo={lo}");
     }
 
     #[test]
     fn approaching_target_has_higher_zero_crossings() {
         // 도플러: 접근(+50m/s) vs 이탈(−50m/s), 18Hz 블레이드 레이트
-        let mut e_app = engine_with_targets(&[0.0, 1000.0, 30.0, 180.0, 6.0, 130.0, 0.0, 50.0]);
-        let mut e_rec = engine_with_targets(&[0.0, 1000.0, 30.0, 180.0, 6.0, 130.0, 0.0, -50.0]);
-        let _ = process_block(&mut e_app, 4096);
-        let _ = process_block(&mut e_rec, 4096);
-        let app = zero_crossings(&process_block(&mut e_app, 131072));
-        let rec = zero_crossings(&process_block(&mut e_rec, 131072));
+        let approaching = [0.0, 1000.0, 30.0, 180.0, 6.0, 150.0, 0.0, 50.0];
+        let receding = [0.0, 1000.0, 30.0, 180.0, 6.0, 150.0, 0.0, -50.0];
+        let app = zero_crossings(&process_target_component(&approaching, 4096, 131072));
+        let rec = zero_crossings(&process_target_component(&receding, 4096, 131072));
         assert!(app > rec, "app={app} rec={rec}");
     }
 

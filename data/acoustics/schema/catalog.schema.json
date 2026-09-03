@@ -64,7 +64,7 @@
         "title": { "type": "string", "minLength": 1 },
         "kind": {
           "type": "string",
-          "enum": ["standard", "peer_reviewed", "government", "educational"]
+          "enum": ["standard", "peer_reviewed", "book", "government", "educational"]
         },
         "url": { "type": "string", "format": "uri" },
         "doi": { "type": "string" },

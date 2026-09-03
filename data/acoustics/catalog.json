@@ -38,6 +38,14 @@
       "notes": "1 Hz–20 kHz 주변 소음을 난류, 해상 교통, 바람 의존 표면 소음 등으로 분해한 기준 문헌."
     },
     {
+      "id": "coates-1990",
+      "title": "Underwater Acoustic Systems",
+      "kind": "book",
+      "url": "https://link.springer.com/book/10.1007/978-1-349-20508-0",
+      "accessed_on": "2026-09-03",
+      "notes": "Wenz 주변 소음의 난류·선박·바람·열잡음 성분을 계산 가능한 공학식으로 정리한 기준."
+    },
+    {
       "id": "mckenna-2012",
       "title": "Underwater radiated noise from modern commercial ships",
       "kind": "peer_reviewed",
@@ -228,10 +236,10 @@
           ]
         }
       ],
-      "evidence_refs": ["wenz-1962"],
+      "evidence_refs": ["wenz-1962", "coates-1990"],
       "limitations": [
         "Wenz 곡선은 범위형 경험 기준이며 특정 시각·위치의 정답 스펙트럼이 아니다.",
-        "현재 Knudsen 구현의 식과 합성 필터는 별도의 출처·곡선 회귀 검증이 필요하다."
+        "Coates/Wenz 수식 회귀는 검증했지만 현재 합성 필터의 대역별 PSD는 별도 검증이 필요하다."
       ]
     },
     {

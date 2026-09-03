@@ -2,7 +2,7 @@
 //!
 //! - 소나 방정식: SNR = SL − TL − (NL − DI), SE = SNR − DT
 //! - TL: 20log₁₀R + α(f)·R (Thorp 흡수 근사)
-//! - NL: Knudsen C₀ 모델
+//! - NL: `noise` 모듈의 Coates/Wenz 네 성분 모델
 //! - 수온약층: 깊이-수온 프로파일 → 음속 프로파일 (맥켄지 근사)
 //!
 //! M0: 핵심 함수 스텁 + 테스트 골격.
