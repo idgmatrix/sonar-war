@@ -165,7 +165,7 @@ impl NoiseBand {
 ///
 /// 20 Hz–20 kHz의 1/3옥타브 중심마다 독립적인 결정적 백색잡음을 band-pass하고,
 /// Coates/Wenz + 강우 목표 PSD로 각 대역의 이득을 교정한다. 준위 규약은
-/// 200 µPa = 1.0 full scale (120 dB re 1µPa)이다.
+/// 1 Pa = 1,000,000 µPa = 1.0 full scale (120 dB re 1µPa)이다.
 #[derive(Debug, Clone)]
 pub struct OceanNoise {
     bands: Vec<NoiseBand>,

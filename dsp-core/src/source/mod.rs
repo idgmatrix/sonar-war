@@ -30,6 +30,92 @@ pub struct SourceSpectrum {
     pub modulation_rate_hz: f32,
 }
 
+/// 한 방사 시각의 1 m 기준 선형 음압 성분 (µPa).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceSample {
+    pub tonal_pressure_1m_upa: [f32; TONAL_HARMONICS as usize],
+    pub broadband_pressure_1m_upa: f32,
+}
+
+/// 상태형 Source 합성기. 전파 환경과 수신기 설정은 갖지 않는다.
+#[derive(Debug, Clone)]
+pub struct SourceVoice {
+    spectrum: SourceSpectrum,
+    tonal_amplitude_1m_upa: [f32; TONAL_HARMONICS as usize],
+    broadband_amplitude_1m_upa: f32,
+    noise_history: Vec<f32>,
+    noise_position: usize,
+    rng: u64,
+}
+
+impl SourceVoice {
+    pub fn new(spectrum: SourceSpectrum, history_samples: usize, seed: u64) -> Self {
+        let tonal_amplitude_1m_upa = std::array::from_fn(|index| {
+            10f32.powf(spectrum.tonal_lines[index].level_db_re_1upa_at_1m / 20.0)
+        });
+        let broadband_amplitude_1m_upa =
+            10f32.powf(spectrum.broadband_level_db_re_1upa_at_1m / 20.0);
+        Self {
+            spectrum,
+            tonal_amplitude_1m_upa,
+            broadband_amplitude_1m_upa,
+            noise_history: vec![0.0; history_samples.max(2)],
+            noise_position: 0,
+            rng: seed,
+        }
+    }
+
+    pub fn spectrum(&self) -> &SourceSpectrum {
+        &self.spectrum
+    }
+
+    /// `source_time_s`의 원시 방사 성분을 읽는다.
+    ///
+    /// 광대역 히스토리 오프셋은 Propagation이 계산하며 Source는 그 의미를 해석하지 않는다.
+    pub fn sample_at(&self, source_time_s: f64, broadband_history_offset: f32) -> SourceSample {
+        let tonal_pressure_1m_upa = std::array::from_fn(|index| {
+            let frequency_hz = self.spectrum.tonal_lines[index].frequency_hz as f64;
+            self.tonal_amplitude_1m_upa[index]
+                * (2.0 * std::f64::consts::PI * frequency_hz * source_time_s).cos() as f32
+        });
+        let envelope =
+            demon_envelope((self.spectrum.modulation_rate_hz as f64 * source_time_s) as f32);
+        SourceSample {
+            tonal_pressure_1m_upa,
+            broadband_pressure_1m_upa: self.broadband_amplitude_1m_upa
+                * self.read_noise(broadband_history_offset)
+                * envelope,
+        }
+    }
+
+    /// Source 시간축을 한 샘플 전진시켜 캐비테이션 난수 히스토리를 갱신한다.
+    pub fn advance(&mut self) {
+        let mut x = self.rng;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng = x;
+        let white = ((x >> 11) as f32 / 9_007_199_254_740_992.0) * 2.0 - 1.0;
+        self.noise_history[self.noise_position] = white;
+        self.noise_position = (self.noise_position + 1) % self.noise_history.len();
+    }
+
+    fn read_noise(&self, offset_samples: f32) -> f32 {
+        let capacity = self.noise_history.len();
+        let offset = offset_samples.max(0.0).min(capacity as f32 - 2.0);
+        let whole = offset.floor() as usize;
+        let fraction = offset - whole as f32;
+        let newest = if self.noise_position == 0 {
+            capacity - 1
+        } else {
+            self.noise_position - 1
+        };
+        let first = newest.wrapping_sub(whole) % capacity;
+        let second = newest.wrapping_sub(whole + 1) % capacity;
+        self.noise_history[first] * (1.0 - fraction) + self.noise_history[second] * fraction
+    }
+}
+
 /// 운항 상태로부터 전파 전 원시 방사 스펙트럼을 만든다.
 pub fn source_spectrum(
     rpm: f32,
@@ -129,5 +215,22 @@ mod tests {
         assert_eq!(spectrum.tonal_lines[0].frequency_hz, 10.0);
         assert_eq!(spectrum.tonal_lines[0].level_db_re_1upa_at_1m, 150.0);
         assert_eq!(spectrum.modulation_rate_hz, 10.0);
+    }
+
+    #[test]
+    fn source_voice_is_deterministic_and_uses_source_level_units() {
+        let spectrum = source_spectrum(120.0, 5, 120.0, 0.4);
+        let mut first = SourceVoice::new(spectrum.clone(), 32, 7);
+        let mut second = SourceVoice::new(spectrum, 32, 7);
+        for index in 0..64 {
+            assert_eq!(
+                first.sample_at(index as f64 / 44100.0, 0.0),
+                second.sample_at(index as f64 / 44100.0, 0.0)
+            );
+            first.advance();
+            second.advance();
+        }
+        let sample = first.sample_at(0.0, 0.0);
+        assert!((sample.tonal_pressure_1m_upa[0] - 1_000_000.0).abs() < 1.0);
     }
 }

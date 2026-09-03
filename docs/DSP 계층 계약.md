@@ -7,10 +7,10 @@
 
 | 계층 | 입력 | 출력 | 포함 | 금지 |
 |---|---|---|---|---|
-| Source | RPM, 블레이드 수, 1 m 토널 준위, 캐비테이션 상태 | `SourceSpectrum` | 1 m 방사 톤선, 광대역 준위, 자체 변조율 | 거리 TL, 도플러, 하이드로폰 지연, 수신기 감도 |
-| Propagation | `SourceSpectrum`, `PropagationGeometry`, 배열 위치, 음속 | `PropagatedSpectrum` | 주파수별 TL, 도플러, 도달 방향, 인과적 배열 지연 | full-scale 정규화, 빔 조향, 후단 압축 |
-| Receiver | `PropagatedSpectrum`, full-scale 기준 | `ReceiverVoiceParameters` | dB re 1 µPa → 선형 FS 변환 | 소스 준위 변경, TL·도플러 재계산 |
-| Analysis/Output | 수신 하이드로폰 프레임 | 빔 출력, BASS/LOFAR, 오디오 | 배열 빔포밍, 표시 분석, 출력 제한 | 음원 재합성 |
+| Source | RPM, 블레이드 수, 1 m 토널 준위, 캐비테이션 상태 | `SourceSpectrum`, `SourceSample` | 1 m 방사 톤선, 광대역 준위, 자체 변조율과 결정적 잡음 히스토리 | 거리 TL, 도플러, 하이드로폰 지연, 수신기 감도 |
+| Propagation | `SourceVoice`, `PropagationGeometry`, 배열 위치, 음속 | `PropagatedSpectrum`, `HydrophoneFrame` | 주파수별 TL, 도플러, 도달 방향, 인과적 배열 지연과 µPa 프레임 혼합 | full-scale 정규화, 빔 조향, 후단 압축 |
+| Receiver | `HydrophoneFrame`, full-scale 기준, 배열/해양 상태 | 조향 빔 샘플 | µPa → 선형 FS 변환, 배열 지연-합, 수신점 주변 소음 | 소스 준위 변경, TL·도플러 재계산 |
+| Analysis/Output | 수신기 빔 샘플 | BASS/LOFAR 텔레메트리, 오디오 | 표시 분석, 출력 제한 | 음원 재합성, 전파·수신 효과 변경 |
 
 ## 2. 단위 계약
 
@@ -21,6 +21,7 @@
 | `ReceivedLine::frequency_hz` | Hz, 도플러 적용 후 |
 | `ReceivedLine::level_db_re_1upa` | 수신점 dB re 1 µPa |
 | `hydrophone_delays_s` | s, 공통 `pmax` 이동 후 0 이상 |
+| `HydrophoneFrame::pressure_upa` | 하이드로폰별 수신점 선형 음압, µPa |
 | `*_amplitude_fs` | 선형 진폭, 기본 120 dB re 1 µPa = 1.0 FS |
 | `arrival_direction` | 수신기→소스 단위 벡터, x=전방·y=하향·z=우현 |
 
@@ -36,15 +37,16 @@
 - Receiver는 전파 계층의 주파수, 도달 방향, 하이드로폰 지연을 보존한다.
 - 기존 엔진 결정성과 거리 감쇠·RPM·도플러·빔포밍 회귀 테스트를 계속 통과해야 한다.
 
-## 4. 현재 범위와 다음 분리
+## 4. 상태형 샘플 경로와 다음 분리
 
-이번 단계는 **스펙트럼 제어 프레임과 단위 경계**를 실제 엔진 생성 경로에 적용한 것이다.
-표적의 상태형 토널/캐비테이션 샘플 생성과 하이드로폰 프레임 혼합은 아직 `Target`과
-`DspEngine::process`에 남아 있다. 다음 단계에서는 다음 버퍼 경계를 추가한다.
+스펙트럼 제어 프레임뿐 아니라 상태형 실시간 샘플 경로에도 같은 경계를 적용했다.
 
-1. Source가 1 m 기준 성분 블록을 생성한다.
-2. Propagation이 성분별 지연·감쇠를 적용해 하이드로폰 프레임을 만든다.
-3. Receiver가 주변 소음과 배열 응답을 적용한다.
-4. Analysis/Output은 수신 프레임을 읽기만 한다.
+1. `SourceVoice`가 1 m 기준 토널·캐비테이션 `SourceSample`을 µPa로 생성한다.
+2. `PropagationProcessor`가 성분별 지연·감쇠·도플러를 적용해 재사용
+   `HydrophoneFrame`에 수신점 µPa를 누적한다.
+3. `ReceiverArray`가 µPa를 full-scale로 교정하고 주변 소음과 배열 응답을 적용한다.
+4. `DspEngine`은 위 객체를 순서대로 호출하며 샘플 루프에서 버퍼를 할당하지 않는다.
 
-이 후속 분리에서도 AudioWorklet의 `DspEngine::process()` 블록당 1회 호출 규약은 유지한다.
+다음 경계는 BASS 누산과 향후 LOFAR/DEMON 분석을 `Analysis`로 옮겨 수신기 출력을 읽기만
+하게 만드는 것이다. 동시에 결정적 블록 덤프를 추가해 각 경계의 수치를 오프라인에서
+검증한다. AudioWorklet의 `DspEngine::process()` 블록당 1회 호출 규약은 계속 유지한다.

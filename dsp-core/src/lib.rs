@@ -9,7 +9,7 @@
 //!   → 소프트 클립 (tanh — 수신기 동역학 압축)
 //! ```
 //!
-//! 준위 규약: 200 µPa = 1.0 full scale (120 dB re 1µPa).
+//! 준위 규약: 1 Pa = 1,000,000 µPa = 1.0 full scale (120 dB re 1µPa).
 //! 좌표계: x=전방, y=하향(수심), z=우현.
 //! 준위 모델: `docs/물리 상수 시트.md`.
 
@@ -22,11 +22,10 @@ pub mod source;
 
 use wasm_bindgen::prelude::*;
 
-use beamform::{DelayAndSum, DEFAULT_SOUND_SPEED};
-use noise::OceanNoise;
-use propagation::{propagate, PropagationGeometry};
-use receiver::{receive, DEFAULT_FULL_SCALE_DB_RE_1UPA};
-use source::{demon_envelope, source_spectrum, TONAL_HARMONICS};
+use beamform::DEFAULT_SOUND_SPEED;
+use propagation::{propagate, HydrophoneFrame, PropagationGeometry, PropagationProcessor};
+use receiver::{ReceiverArray, DEFAULT_FULL_SCALE_DB_RE_1UPA};
+use source::{source_spectrum, SourceVoice};
 
 /// 가상 구형 어레이 하이드로폰 수.
 const HYDROPHONE_COUNT: usize = 16;
@@ -87,20 +86,8 @@ fn fibonacci_sphere(n: usize, radius: f32) -> Vec<[f32; 3]> {
 
 /// 표적 1개 (수중 소음원).
 struct Target {
-    /// 하이드로폰별 읽기 지연 (s) = p_max − p_h·û/c (≥ 0).
-    delays: Vec<f32>,
-    /// 토널 진폭 (고조파별, 선형).
-    tonal_amp: [f32; TONAL_HARMONICS as usize],
-    /// 도플러 시프트된 고조파 주파수 (Hz).
-    f_dop: [f32; TONAL_HARMONICS as usize],
-    /// 캐비테이션 광대역 진폭 (선형).
-    cav_amp: f32,
-    /// 도플러 시프트된 블레이드 레이트 (Hz).
-    blade_dop: f32,
-    /// 캐비테이션 백색잡음 링 버퍼 (단위 잡음 — 읽기 시 스케일).
-    noise_buf: Vec<f32>,
-    noise_pos: usize,
-    rng: u64,
+    source: SourceVoice,
+    propagation: PropagationProcessor,
 }
 
 impl Target {
@@ -128,48 +115,15 @@ impl Target {
             hydrophones,
             DEFAULT_SOUND_SPEED,
         );
-        let received = receive(&propagated, DEFAULT_FULL_SCALE_DB_RE_1UPA);
+        let propagation = PropagationProcessor::new(&source, &propagated);
+        let seed = 0x9E37_79B9_7F4A_7C15
+            ^ (descriptor.blade_count as u64).wrapping_mul(0x2545_F491_4F6C_DD1D);
 
         Self {
-            delays: received.hydrophone_delays_s,
-            tonal_amp: received.tonal_amplitude_fs,
-            f_dop: received.tonal_frequency_hz,
-            cav_amp: received.broadband_amplitude_fs,
-            blade_dop: received.modulation_rate_hz,
             // 지연 범위 0..2R/c (구형 어레이) → 2× 최대단일지연 용량
-            noise_buf: vec![0.0f32; max_delay_samples * 2 + 2],
-            noise_pos: 0,
-            rng: 0x9E37_79B9_7F4A_7C15
-                ^ (descriptor.blade_count as u64).wrapping_mul(0x2545_F491_4F6C_DD1D),
+            source: SourceVoice::new(source, max_delay_samples * 2 + 2, seed),
+            propagation,
         }
-    }
-
-    /// `delay_samples`만큼 과거의 캐비테이션 잡음 (선형 보간 분수 지연).
-    fn read_noise(&self, delay_samples: f32) -> f32 {
-        let cap = self.noise_buf.len();
-        let d = delay_samples.max(0.0).min(cap as f32 - 2.0);
-        let i = d.floor() as usize;
-        let frac = d - i as f32;
-        let newest = if self.noise_pos == 0 {
-            cap - 1
-        } else {
-            self.noise_pos - 1
-        };
-        let idx0 = newest.wrapping_sub(i) % cap;
-        let idx1 = newest.wrapping_sub(i + 1) % cap;
-        self.noise_buf[idx0] * (1.0 - frac) + self.noise_buf[idx1] * frac
-    }
-
-    /// 현재 시각의 백색잡음 1샘플 push.
-    fn push_noise(&mut self) {
-        let mut x = self.rng;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.rng = x;
-        let white = ((x >> 11) as f32 / 9007199254740992.0) * 2.0 - 1.0;
-        self.noise_buf[self.noise_pos] = white;
-        self.noise_pos = (self.noise_pos + 1) % self.noise_buf.len();
     }
 }
 
@@ -181,12 +135,11 @@ pub struct DspEngine {
     sample_rate: f32,
     t: f64,
     hydrophones: Vec<[f32; 3]>,
-    array: DelayAndSum,
+    receiver: ReceiverArray,
     beam: [f32; 3],
     targets: Vec<Target>,
-    ocean: OceanNoise,
+    hydrophone_frame: HydrophoneFrame,
     max_delay_samples: usize,
-    mixed: Vec<f32>,
     bass_power: Vec<f32>,
     bass_samples: u32,
     sample_index: u64,
@@ -200,17 +153,21 @@ impl DspEngine {
         let hydrophones = fibonacci_sphere(HYDROPHONE_COUNT, ARRAY_RADIUS_M);
         let max_delay_samples =
             (ARRAY_RADIUS_M / DEFAULT_SOUND_SPEED * sample_rate).ceil() as usize;
-        let array = DelayAndSum::new(hydrophones.clone(), DEFAULT_SOUND_SPEED, sample_rate);
+        let receiver = ReceiverArray::new(
+            hydrophones.clone(),
+            DEFAULT_SOUND_SPEED,
+            sample_rate,
+            DEFAULT_FULL_SCALE_DB_RE_1UPA,
+        );
         let mut engine = Self {
             sample_rate,
             t: 0.0,
             hydrophones,
-            array,
+            receiver,
             beam: [1.0, 0.0, 0.0],
             targets: Vec::new(),
-            ocean: OceanNoise::new(sample_rate, 5.0, 0.0),
+            hydrophone_frame: HydrophoneFrame::new(HYDROPHONE_COUNT),
             max_delay_samples,
-            mixed: vec![0.0f32; HYDROPHONE_COUNT],
             bass_power: vec![0.0f32; BASS_BINS],
             bass_samples: 0,
             sample_index: 0,
@@ -235,7 +192,8 @@ impl DspEngine {
 
     /// 해양 배경잡음 설정 (풍속 m/s, 강우 mm/hr).
     pub fn set_ocean(&mut self, wind_speed_ms: f32, rain_mm_hr: f32) {
-        self.ocean = OceanNoise::new(self.sample_rate, wind_speed_ms, rain_mm_hr);
+        self.receiver
+            .set_ocean(self.sample_rate, wind_speed_ms, rain_mm_hr);
     }
 
     /// 메인 빔 조향 (azimuth deg: 0=전방, elevation deg: +=하향).
@@ -272,38 +230,29 @@ impl DspEngine {
         let dt = 1.0 / self.sample_rate as f64;
         for o in out.iter_mut() {
             let t = self.t;
-            for m in self.mixed.iter_mut() {
-                *m = 0.0;
-            }
+            self.hydrophone_frame.clear();
 
             for tgt in &mut self.targets {
-                for (h, &delay_s) in tgt.delays.iter().enumerate() {
-                    let tt = t - delay_s as f64;
-                    let mut s = 0.0f32;
-                    for i in 0..TONAL_HARMONICS as usize {
-                        s += tgt.tonal_amp[i]
-                            * (2.0 * std::f64::consts::PI * tgt.f_dop[i] as f64 * tt).cos() as f32;
-                    }
-                    let noise = tgt.read_noise(delay_s * self.sample_rate);
-                    let env = demon_envelope((tgt.blade_dop as f64 * tt) as f32);
-                    s += tgt.cav_amp * noise * env;
-                    self.mixed[h] += s;
-                }
-                tgt.push_noise();
+                tgt.propagation.render_into(
+                    &tgt.source,
+                    t,
+                    self.sample_rate,
+                    &mut self.hydrophone_frame,
+                );
+                tgt.source.advance();
             }
 
-            let beam_out = self.array.process_sample(&self.mixed, travel);
+            let x = self.receiver.process_frame(&self.hydrophone_frame, travel);
             if self.sample_index.is_multiple_of(BASS_DECIMATION) {
                 for bin in 0..BASS_BINS {
                     let az = 2.0 * std::f32::consts::PI * bin as f32 / BASS_BINS as f32;
                     // 파원 방위의 반대가 파동 진행 방향이다.
                     let scan_travel = [-az.cos(), 0.0, -az.sin()];
-                    let sample = self.array.beam_sample(scan_travel);
+                    let sample = self.receiver.beam_sample(scan_travel);
                     self.bass_power[bin] += sample * sample;
                 }
                 self.bass_samples += 1;
             }
-            let x = beam_out + self.ocean.next_sample();
             *o = x.tanh();
             self.t += dt;
             self.sample_index += 1;

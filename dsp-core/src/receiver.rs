@@ -2,10 +2,12 @@
 //!
 //! 입력의 TL·도플러·공간 지연을 변경하지 않으며, 센서 감도/동역학 기준만 적용한다.
 
-use crate::propagation::PropagatedSpectrum;
+use crate::beamform::DelayAndSum;
+use crate::noise::OceanNoise;
+use crate::propagation::{HydrophoneFrame, PropagatedSpectrum};
 use crate::source::TONAL_HARMONICS;
 
-/// 기본 수신기 full-scale: 200 µPa = 120 dB re 1 µPa.
+/// 기본 수신기 full-scale: 1 Pa = 1,000,000 µPa = 120 dB re 1 µPa.
 pub const DEFAULT_FULL_SCALE_DB_RE_1UPA: f32 = 120.0;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +18,56 @@ pub struct ReceiverVoiceParameters {
     pub modulation_rate_hz: f32,
     pub hydrophone_delays_s: Vec<f32>,
     pub arrival_direction: [f32; 3],
+}
+
+/// 하이드로폰 물리 음압을 full-scale로 변환하고 배열·주변 소음을 처리하는 수신기.
+#[derive(Debug, Clone)]
+pub struct ReceiverArray {
+    array: DelayAndSum,
+    ambient: OceanNoise,
+    pressure_to_full_scale: f32,
+    full_scale_frame: Vec<f32>,
+}
+
+impl ReceiverArray {
+    pub fn new(
+        hydrophones: Vec<[f32; 3]>,
+        sound_speed_ms: f32,
+        sample_rate: f32,
+        full_scale_db_re_1upa: f32,
+    ) -> Self {
+        let hydrophone_count = hydrophones.len();
+        Self {
+            array: DelayAndSum::new(hydrophones, sound_speed_ms, sample_rate),
+            ambient: OceanNoise::new(sample_rate, 5.0, 0.0),
+            pressure_to_full_scale: 10f32.powf(-full_scale_db_re_1upa / 20.0),
+            full_scale_frame: vec![0.0; hydrophone_count],
+        }
+    }
+
+    pub fn set_ocean(&mut self, sample_rate: f32, wind_speed_ms: f32, rain_mm_hr: f32) {
+        self.ambient = OceanNoise::new(sample_rate, wind_speed_ms, rain_mm_hr);
+    }
+
+    /// 배열 신호만 처리한다. 주변 소음과 출력 제한은 포함하지 않는다.
+    #[inline]
+    pub fn process_signal_frame(&mut self, frame: &HydrophoneFrame, steer: [f32; 3]) -> f32 {
+        debug_assert_eq!(frame.pressure_upa.len(), self.full_scale_frame.len());
+        for (output, pressure_upa) in self.full_scale_frame.iter_mut().zip(&frame.pressure_upa) {
+            *output = pressure_upa * self.pressure_to_full_scale;
+        }
+        self.array.process_sample(&self.full_scale_frame, steer)
+    }
+
+    /// 배열 출력에 수신점 주변 소음을 합성한다.
+    #[inline]
+    pub fn process_frame(&mut self, frame: &HydrophoneFrame, steer: [f32; 3]) -> f32 {
+        self.process_signal_frame(frame, steer) + self.ambient.next_sample()
+    }
+
+    pub fn beam_sample(&self, steer: [f32; 3]) -> f32 {
+        self.array.beam_sample(steer)
+    }
 }
 
 #[inline]
@@ -82,5 +134,21 @@ mod tests {
         let received = receive(&propagated, DEFAULT_FULL_SCALE_DB_RE_1UPA);
         assert_eq!(received.hydrophone_delays_s, propagated.hydrophone_delays_s);
         assert_eq!(received.arrival_direction, propagated.arrival_direction);
+    }
+
+    #[test]
+    fn receiver_converts_upa_frame_to_full_scale() {
+        let mut receiver = ReceiverArray::new(
+            vec![[0.0, 0.0, 0.0]],
+            1500.0,
+            44100.0,
+            DEFAULT_FULL_SCALE_DB_RE_1UPA,
+        );
+        let frame = HydrophoneFrame {
+            pressure_upa: vec![1_000_000.0],
+        };
+        receiver.process_signal_frame(&frame, [1.0, 0.0, 0.0]);
+        let output = receiver.process_signal_frame(&frame, [1.0, 0.0, 0.0]);
+        assert!((output - 1.0).abs() < 1e-6);
     }
 }

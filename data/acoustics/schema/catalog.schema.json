@@ -19,7 +19,7 @@
       "properties": {
         "source_level": { "const": "dB re 1 µPa @ 1 m" },
         "spectral_density": { "const": "dB re 1 µPa²/Hz" },
-        "full_scale": { "const": "200 µPa = 1.0 FS" }
+        "full_scale": { "const": "1 Pa = 1,000,000 µPa = 1.0 FS (120 dB re 1 µPa)" }
       },
       "additionalProperties": false
     },

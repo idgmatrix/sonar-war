@@ -53,7 +53,7 @@ describe('음향 소스 카탈로그', () => {
     expect(catalog.level_convention).toEqual({
       source_level: 'dB re 1 µPa @ 1 m',
       spectral_density: 'dB re 1 µPa²/Hz',
-      full_scale: '200 µPa = 1.0 FS',
+      full_scale: '1 Pa = 1,000,000 µPa = 1.0 FS (120 dB re 1 µPa)',
     });
 
     const sourceIds = catalog.sources.map((source) => source.id);

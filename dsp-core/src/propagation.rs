@@ -5,7 +5,7 @@
 
 use crate::beamform::beam_delay;
 use crate::physics::transmission_loss_db;
-use crate::source::{SourceLine, SourceSpectrum, TONAL_HARMONICS};
+use crate::source::{SourceLine, SourceSpectrum, SourceVoice, TONAL_HARMONICS};
 
 /// 캐비테이션 광대역 TL을 평가하는 기준 주파수 (kHz).
 pub const BROADBAND_REFERENCE_KHZ: f32 = 1.0;
@@ -42,6 +42,82 @@ pub struct PropagatedSpectrum {
     pub hydrophone_delays_s: Vec<f32>,
     /// 수신기에서 소스를 향하는 단위 벡터. x=전방, y=하향, z=우현.
     pub arrival_direction: [f32; 3],
+}
+
+/// 한 오디오 샘플 시각의 배열 입력. 값은 아직 수신기 FS로 정규화되지 않은 µPa다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HydrophoneFrame {
+    pub pressure_upa: Vec<f32>,
+}
+
+impl HydrophoneFrame {
+    pub fn new(hydrophone_count: usize) -> Self {
+        Self {
+            pressure_upa: vec![0.0; hydrophone_count],
+        }
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.pressure_upa.fill(0.0);
+    }
+}
+
+/// 한 Source의 상태형 샘플을 배열 위치까지 전파하는 고정 파라미터 프로세서.
+#[derive(Debug, Clone)]
+pub struct PropagationProcessor {
+    tonal_linear_loss: [f32; TONAL_HARMONICS as usize],
+    broadband_linear_loss: f32,
+    doppler_factor: f32,
+    hydrophone_delays_s: Vec<f32>,
+}
+
+impl PropagationProcessor {
+    pub fn new(source: &SourceSpectrum, propagated: &PropagatedSpectrum) -> Self {
+        let tonal_linear_loss = std::array::from_fn(|index| {
+            10f32.powf(
+                (propagated.tonal_lines[index].level_db_re_1upa
+                    - source.tonal_lines[index].level_db_re_1upa_at_1m)
+                    / 20.0,
+            )
+        });
+        let broadband_linear_loss = 10f32.powf(
+            (propagated.broadband_level_db_re_1upa - source.broadband_level_db_re_1upa_at_1m)
+                / 20.0,
+        );
+        let doppler_factor = propagated.tonal_lines[0].frequency_hz
+            / source.tonal_lines[0].frequency_hz.max(f32::MIN_POSITIVE);
+        Self {
+            tonal_linear_loss,
+            broadband_linear_loss,
+            doppler_factor,
+            hydrophone_delays_s: propagated.hydrophone_delays_s.clone(),
+        }
+    }
+
+    /// Source 샘플을 전파해 재사용 `HydrophoneFrame`에 누적한다.
+    #[inline]
+    pub fn render_into(
+        &self,
+        source: &SourceVoice,
+        receiver_time_s: f64,
+        sample_rate: f32,
+        frame: &mut HydrophoneFrame,
+    ) {
+        debug_assert_eq!(frame.pressure_upa.len(), self.hydrophone_delays_s.len());
+        for (hydrophone, &delay_s) in self.hydrophone_delays_s.iter().enumerate() {
+            let source_time_s = (receiver_time_s - delay_s as f64) * self.doppler_factor as f64;
+            let sample = source.sample_at(source_time_s, delay_s * sample_rate);
+            let tonal = sample
+                .tonal_pressure_1m_upa
+                .iter()
+                .zip(self.tonal_linear_loss)
+                .map(|(pressure, loss)| pressure * loss)
+                .sum::<f32>();
+            frame.pressure_upa[hydrophone] +=
+                tonal + sample.broadband_pressure_1m_upa * self.broadband_linear_loss;
+        }
+    }
 }
 
 pub fn propagate(
@@ -160,5 +236,29 @@ mod tests {
     fn doppler_sign_matches_approach_convention() {
         assert!(doppler_factor(10.0, 1500.0) > 1.0);
         assert!(doppler_factor(-10.0, 1500.0) < 1.0);
+    }
+
+    #[test]
+    fn processor_writes_reusable_physical_pressure_frame() {
+        let spectrum = source_spectrum(120.0, 5, 120.0, 0.0);
+        let propagated = propagate(
+            &spectrum,
+            PropagationGeometry {
+                bearing_deg: 0.0,
+                range_m: 1.0,
+                source_depth_m: 0.0,
+                receiver_depth_m: 0.0,
+                relative_velocity_ms: 0.0,
+            },
+            &[[0.0, 0.0, 0.0]],
+            1500.0,
+        );
+        let processor = PropagationProcessor::new(&spectrum, &propagated);
+        let source = SourceVoice::new(spectrum, 4, 7);
+        let mut frame = HydrophoneFrame::new(1);
+        processor.render_into(&source, 0.0, 44100.0, &mut frame);
+        assert!(frame.pressure_upa[0] > 1_000_000.0);
+        frame.clear();
+        assert_eq!(frame.pressure_upa, [0.0]);
     }
 }
