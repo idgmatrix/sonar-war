@@ -92,6 +92,30 @@ impl DelayAndSum {
         sum / n as f32
     }
 
+    /// 현재 링 버퍼 상태를 전진시키지 않고 다른 방향의 빔을 읽는다.
+    ///
+    /// 오디오용 주 빔과 별개로 BASS 전 방위 스캔을 만들 때 사용한다. 동일한
+    /// 하이드로폰 샘플을 여러 방향에서 읽기만 하므로 엔진 시간은 변하지 않는다.
+    pub fn beam_sample(&self, steer: [f32; 3]) -> f32 {
+        let n = self.hydrophones.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let mut pmax = 0f32;
+        let mut dots = Vec::with_capacity(n);
+        for p in &self.hydrophones {
+            let d = beam_delay(*p, steer, self.sound_speed);
+            pmax = pmax.max(d);
+            dots.push(d);
+        }
+        let sum = dots
+            .iter()
+            .enumerate()
+            .map(|(h, &d)| self.read_delayed(h, (pmax - d) * self.sample_rate))
+            .sum::<f32>();
+        sum / n as f32
+    }
+
     /// `delay_samples`만큼 과거의 샘플 (선형 보간 분수 지연).
     fn read_delayed(&self, h: usize, delay_samples: f32) -> f32 {
         let cap = self.buffers[h].len();

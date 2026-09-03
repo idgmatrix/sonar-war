@@ -4,56 +4,70 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SSN-X Sonar Simulator</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23020706' stroke='%2365ff96'/%3E%3Cpath d='M16 16 28 10M16 16v-9' stroke='%23ffd166'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/ui/theme.css" />
   </head>
   <body class="theme-p31-green">
     <div id="app">
-      <header class="panel">
-        <h1>SSN-X BLACKTIDE — SONAR SIMULATOR</h1>
-        <p class="sub">M2 · RUST/WASM SONAR SYNTHESIS · LOFAR / DEMON / DOPPLER</p>
+      <header class="command-header">
+        <div>
+          <h1>SSN-X BLACKTIDE</h1>
+          <p class="sub">Passive sonar control · M3 display integration</p>
+        </div>
+        <button id="start" class="btn start">Start sonar</button>
       </header>
 
-      <main class="panel grid">
-        <section class="readout">
-          <div class="label">SIM TICK (10Hz)</div>
-          <div class="value" id="tick">0</div>
-        </section>
-        <section class="readout">
-          <div class="label">MISSION TIME</div>
-          <div class="value" id="time">0.0s</div>
-        </section>
-        <section class="readout">
-          <div class="label">ACOUSTIC ENTITIES</div>
-          <div class="value" id="entities">0</div>
-        </section>
-        <section class="readout">
-          <div class="label">AUDIO DSP</div>
-          <div class="value small" id="audio-status">STANDBY</div>
-        </section>
-        <section class="readout">
-          <div class="label">WORKLET CPU (budget &lt; 50%)</div>
-          <div class="value small" id="cpu">—</div>
-        </section>
-        <section class="readout">
-          <div class="label">OUTPUT LEVEL (dBFS)</div>
-          <div class="value small" id="rms">—</div>
-        </section>
-        <section class="readout">
-          <div class="label">ACTIVE SCENE</div>
-          <div class="value small" id="scene">—</div>
-        </section>
+      <aside class="status-strip" aria-label="시뮬레이션 상태">
+        <div><span>Tick</span><strong id="tick">0</strong></div>
+        <div><span>Mission</span><strong id="time">0.0s</strong></div>
+        <div><span>Contacts</span><strong id="entities">0</strong></div>
+        <div class="wide"><span>DSP</span><strong id="audio-status">Standby</strong></div>
+        <div><span>CPU</span><strong id="cpu">—</strong></div>
+        <div><span>Level</span><strong id="rms">—</strong></div>
+        <div class="wide"><span>Scene</span><strong id="scene">—</strong></div>
+      </aside>
+
+      <main class="sonar-bank">
+        <figure class="scope bass-scope">
+          <figcaption>
+            <span>BASS · broadband bearing history</span>
+            <output id="bearing-value">000°</output>
+          </figcaption>
+          <canvas id="bass-display" width="960" height="250" aria-label="BASS 방위 워터폴"></canvas>
+        </figure>
+
+        <figure class="scope lofar-scope">
+          <figcaption>
+            <span>LOFAR · 0–500 Hz narrowband analysis</span>
+            <output id="harmonic-value">10.0 Hz</output>
+          </figcaption>
+          <canvas id="lofar-display" width="960" height="250" aria-label="LOFAR 주파수 워터폴"></canvas>
+        </figure>
       </main>
 
-      <footer class="panel">
-        <button id="start" class="btn">▶ START OPERATION</button>
-        <span class="hint">클릭 시 오디오 컨텍스트 + WASM DSP 시작</span>
+      <section class="control-deck" aria-label="소나 제어대">
+        <label>
+          <span>Beam bearing</span>
+          <input id="bearing" type="range" min="0" max="359" step="1" value="0" />
+        </label>
+        <label>
+          <span>Beam elevation <output id="elevation-value">+0°</output></span>
+          <input id="elevation" type="range" min="-60" max="60" step="1" value="0" />
+        </label>
+        <label>
+          <span>Harmonic ruler</span>
+          <input id="harmonic" type="range" min="1" max="100" step="0.5" value="10" />
+        </label>
+      </section>
+
+      <footer class="scene-deck">
+        <span>Acoustic test scene</span>
         <div class="scene-buttons">
-          <span class="hint">씬 (도플러/RPM 청취):</span>
-          <button id="scene-demo" class="btn small">DEMO</button>
-          <button id="scene-approach" class="btn small">APPROACH</button>
-          <button id="scene-recede" class="btn small">RECEDING</button>
-          <button id="scene-rpmUp" class="btn small">RPM↑</button>
-          <button id="scene-rpmDown" class="btn small">RPM↓</button>
+          <button id="scene-demo" class="btn small">Three contacts</button>
+          <button id="scene-approach" class="btn small">Approaching</button>
+          <button id="scene-recede" class="btn small">Receding</button>
+          <button id="scene-rpmUp" class="btn small">RPM 180</button>
+          <button id="scene-rpmDown" class="btn small">RPM 60</button>
         </div>
       </footer>
     </div>

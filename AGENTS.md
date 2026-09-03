@@ -15,8 +15,8 @@ npm run dev                 # Vite dev server (audio only works on localhost —
 npm run build               # tsc -b && vite build
 npm test                    # vitest run (TS tests in tests/)
 npx vitest run tests/acousticEntity.test.ts -t "name"   # single TS test
-npm run wasm:test           # cargo test -p dsp-core (Rust tests run natively, not in WASM)
-cargo test -p dsp-core <name>   # single Rust test (run from dsp-core/ or with -p)
+npm run wasm:test           # cargo test --manifest-path dsp-core/Cargo.toml (native Rust tests)
+cargo test --manifest-path dsp-core/Cargo.toml <name>   # single Rust test
 npm run wasm:build          # wasm-pack build dsp-core --target web --out-dir pkg --dev  ← REQUIRED after any dsp-core change
 npm run wasm:build:release  # release build (LTO, codegen-units=1)
 ```

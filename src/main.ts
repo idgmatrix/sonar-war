@@ -13,6 +13,7 @@
 import { TickLoop } from './core/sim/tickLoop.ts';
 import { createDemoWorld, World } from './core/sim/world.ts';
 import workletUrl from './dsp/worklets/sonarWorklet.ts?worker&url';
+import { BassDisplay, LofarDisplay } from './render/displays/sonarDisplays.ts';
 import wasmUrl from '../dsp-core/pkg/dsp_core_bg.wasm?url';
 
 const tickEl = document.getElementById('tick')!;
@@ -22,6 +23,17 @@ const audioStatusEl = document.getElementById('audio-status')!;
 const cpuEl = document.getElementById('cpu')!;
 const sceneEl = document.getElementById('scene')!;
 const rmsEl = document.getElementById('rms')!;
+const bearingEl = document.getElementById('bearing-value')!;
+const elevationEl = document.getElementById('elevation-value')!;
+const harmonicEl = document.getElementById('harmonic-value')!;
+const bearingInput = document.getElementById('bearing') as HTMLInputElement;
+const elevationInput = document.getElementById('elevation') as HTMLInputElement;
+const harmonicInput = document.getElementById('harmonic') as HTMLInputElement;
+const bassCanvas = document.getElementById('bass-display') as HTMLCanvasElement;
+const lofarCanvas = document.getElementById('lofar-display') as HTMLCanvasElement;
+
+const bassDisplay = new BassDisplay(bassCanvas);
+const lofarDisplay = new LofarDisplay(lofarCanvas, 500);
 
 const world: World = createDemoWorld();
 
@@ -71,6 +83,7 @@ let node: AudioWorkletNode | null = null;
 let analyser: AnalyserNode | null = null;
 let hasPerformance = false;
 let cpuDiagLogged = false;
+let lofarLevels = new Float32Array(0);
 
 /**
  * 출력 RMS(0..1) — AnalyserNode 시간 영역에서.
@@ -100,6 +113,31 @@ function sendScene(key: string): void {
     console.log(`[main] scene RMS ${key} = ${rmsToDb(measureRms())}`);
   }, 1000);
 }
+
+function sendBeam(): void {
+  const azimuth = Number(bearingInput.value);
+  const elevation = Number(elevationInput.value);
+  bearingEl.textContent = `${azimuth.toFixed(0).padStart(3, '0')}°`;
+  elevationEl.textContent = `${elevation >= 0 ? '+' : ''}${elevation.toFixed(0)}°`;
+  bassDisplay.setBearing(azimuth);
+  node?.port.postMessage({ type: 'beam', azimuth, elevation });
+}
+
+function setHarmonicRuler(): void {
+  const fundamental = Number(harmonicInput.value);
+  harmonicEl.textContent = `${fundamental.toFixed(1)} Hz`;
+  lofarDisplay.setFundamental(fundamental);
+}
+
+bearingInput.addEventListener('input', sendBeam);
+elevationInput.addEventListener('input', sendBeam);
+harmonicInput.addEventListener('input', setHarmonicRuler);
+bassCanvas.addEventListener('pointerdown', (event) => {
+  bearingInput.value = bassDisplay.bearingAtClientX(event.clientX).toFixed(0);
+  sendBeam();
+});
+sendBeam();
+setHarmonicRuler();
 
 // 씬 버튼 배선
 for (const key of Object.keys(SCENES)) {
@@ -145,7 +183,8 @@ async function startAudio(): Promise<void> {
       // 엔진 기본 데모 씬 + 해양/빔 설정을 명시적으로 전송 (port 경로 검증)
       sendScene('demo');
       node!.port.postMessage({ type: 'ocean', wind: 5, rain: 0 });
-      node!.port.postMessage({ type: 'beam', azimuth: 45, elevation: 0 });
+      bearingInput.value = '45';
+      sendBeam();
       if (!hasPerformance) {
         cpuEl.textContent = 'n/a (no clock)';
       }
@@ -161,7 +200,9 @@ async function startAudio(): Promise<void> {
       }
       const cpu = data.perBlock; // 실제 process() 소요 (1ms 클럭 양자화)
       const upper = data.perBlockSpan; // 블럭 간 갭 포함 상한
-      const rt = data.spanMs <= data.audioMs; // 오디오 스레드 실시간 유지
+      // Date.now 기반 벽시계 스팬에는 스케줄러 지터가 섞이므로 10% 여유를 둔다.
+      // 실제 underrun 검출기는 아니며, 장기적으로 AudioWorklet glitch telemetry로 교체한다.
+      const rt = data.spanMs <= data.audioMs * 1.1;
       const pass = upper < 5;
       cpuEl.textContent = `${cpu.toFixed(2)}ms/bl · ≤${upper.toFixed(1)} · RT${rt ? '✓' : '✗'}`;
       cpuEl.classList.toggle('warn', !pass);
@@ -177,6 +218,8 @@ async function startAudio(): Promise<void> {
           resolution: data.resolution,
         });
       }
+    } else if (data?.type === 'bass' && data.levels instanceof Float32Array) {
+      bassDisplay.update(data.levels);
     } else if (data?.type === 'error') {
       audioStatusEl.textContent = `WASM ERROR: ${data.message}`;
     }
@@ -184,15 +227,26 @@ async function startAudio(): Promise<void> {
 
   // node → analyser → gain → destination
   // AnalyserNode는 출력 경로의 사후 측정용 (사용자 기준 Web Audio의 보조 역할).
-  analyser = new AnalyserNode(ctx, { fftSize: 2048 });
+  analyser = new AnalyserNode(ctx, {
+    fftSize: 32768,
+    minDecibels: -110,
+    maxDecibels: -20,
+    smoothingTimeConstant: 0.72,
+  });
+  lofarLevels = new Float32Array(analyser.frequencyBinCount);
   const gain = new GainNode(ctx);
   gain.gain.value = 0.5;
   node.connect(analyser).connect(gain).connect(ctx.destination);
 
   // 출력 레벨 폴러 — HUD 갱신 + 무음/씬 변화 객관 검증
+  let visualFrame = 0;
   setInterval(() => {
-    rmsEl.textContent = rmsToDb(measureRms());
-  }, 400);
+    if (!analyser) return;
+    analyser.getFloatFrequencyData(lofarLevels);
+    lofarDisplay.update(lofarLevels, ctx.sampleRate);
+    visualFrame += 1;
+    if (visualFrame % 4 === 0) rmsEl.textContent = rmsToDb(measureRms());
+  }, 100);
 
   if (ctx.state === 'suspended') {
     await ctx.resume();

@@ -48,6 +48,9 @@ function nowMs(): number {
  * 해상도보다 훨씬 길어야 per-block 상한이 의미 있다.
  */
 const CPU_WINDOW_MS = 200;
+/** BASS 전 방위 레벨을 UI에 보내는 간격 (오디오 시간 기준). */
+const BASS_WINDOW_MS = 100;
+const BASS_BINS = 72;
 
 class SonarProcessor extends AudioWorkletProcessor {
   private engine: DspEngine | null = null;
@@ -62,6 +65,8 @@ class SonarProcessor extends AudioWorkletProcessor {
   private spanStart = -1; // 윈도우 첫 t0
   private spanEnd = 0; // 윈도우 마지막 t1
   private resolution: number | null = null; // worklet 타이머 해상도 (ms)
+  private bassAccumMs = 0;
+  private readonly bassLevels = new Float32Array(BASS_BINS);
 
   constructor() {
     super();
@@ -167,6 +172,7 @@ class SonarProcessor extends AudioWorkletProcessor {
       //    perBlockSpan = span/blockCount ≥ 실제 per-block CPU (갭은 우리 CPU가 아님).
       this.cpuAccumMs += t1 - t0;
       this.audioAccumMs += (frames / sampleRate) * 1000;
+      this.bassAccumMs += (frames / sampleRate) * 1000;
       this.blockCount += 1;
       if (this.spanStart < 0) this.spanStart = t0;
       this.spanEnd = t1;
@@ -188,6 +194,13 @@ class SonarProcessor extends AudioWorkletProcessor {
         this.audioAccumMs = 0;
         this.blockCount = 0;
         this.spanStart = -1;
+      }
+      if (this.bassAccumMs >= BASS_WINDOW_MS) {
+        // Rust가 동일 하이드로폰 링 버퍼에서 계산한 전 방위 빔 레벨이다.
+        // TS는 음향을 재합성하지 않고 시각화만 담당한다.
+        this.engine.bass_scan(this.bassLevels);
+        this.port.postMessage({ type: 'bass', levels: this.bassLevels });
+        this.bassAccumMs = 0;
       }
     } else {
       // 초기화 중/실패: 무음

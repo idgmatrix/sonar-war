@@ -36,6 +36,10 @@ const FULL_SCALE_DB: f32 = 120.0;
 const HYDROPHONE_COUNT: usize = 16;
 /// 구형 어레이 반지름 (m) — 보우 어레이 DIA 8.4m.
 const ARRAY_RADIUS_M: f32 = 4.2;
+/// BASS 전 방위 스캔 해상도 (5° 간격).
+const BASS_BINS: usize = 72;
+/// 매 샘플이 아니라 16샘플마다 스캔해 AudioWorklet 예산을 지킨다.
+const BASS_DECIMATION: u64 = 16;
 
 /// 표적 1개당 float 수: [bearing_deg, range_m, depth_m, rpm, blades, tonal_db, cavitation, rel_vel_ms]
 const TARGET_STRIDE: usize = 8;
@@ -173,6 +177,9 @@ pub struct DspEngine {
     ocean: OceanNoise,
     max_delay_samples: usize,
     mixed: Vec<f32>,
+    bass_power: Vec<f32>,
+    bass_samples: u32,
+    sample_index: u64,
 }
 
 #[wasm_bindgen]
@@ -193,6 +200,9 @@ impl DspEngine {
             ocean: OceanNoise::new(sample_rate, 5.0, 0.0),
             max_delay_samples,
             mixed: vec![0.0f32; HYDROPHONE_COUNT],
+            bass_power: vec![0.0f32; BASS_BINS],
+            bass_samples: 0,
+            sample_index: 0,
         };
         engine.set_targets(&demo_scene());
         engine
@@ -237,6 +247,20 @@ impl DspEngine {
         self.targets.len() as u32
     }
 
+    /// 최근 처리 구간의 전 방위 BASS 레벨(dBFS)을 반환한다.
+    ///
+    /// `out`의 길이가 방위 빈 수가 되며 0°(전방)부터 시계방향으로 균등 배치된다.
+    /// 읽은 뒤 누산기를 비워 다음 UI 프레임과 시간 구간이 겹치지 않게 한다.
+    pub fn bass_scan(&mut self, out: &mut [f32]) {
+        let count = self.bass_samples.max(1) as f32;
+        for (i, value) in out.iter_mut().enumerate() {
+            let power = self.bass_power.get(i).copied().unwrap_or(0.0) / count;
+            *value = (10.0 * power.max(1e-12).log10()).clamp(-120.0, 0.0);
+        }
+        self.bass_power.fill(0.0);
+        self.bass_samples = 0;
+    }
+
     /// 샘플 블럭 1개 합성 (모노 — 채널 복사는 호스트).
     pub fn process(&mut self, out: &mut [f32]) {
         // 빔포머 조향(명세서 §3.2, τᵢ = pᵢ·û/c)의 û는 **파동 진행 방향** —
@@ -266,9 +290,20 @@ impl DspEngine {
             }
 
             let beam_out = self.array.process_sample(&self.mixed, travel);
+            if self.sample_index % BASS_DECIMATION == 0 {
+                for bin in 0..BASS_BINS {
+                    let az = 2.0 * std::f32::consts::PI * bin as f32 / BASS_BINS as f32;
+                    // 파원 방위의 반대가 파동 진행 방향이다.
+                    let scan_travel = [-az.cos(), 0.0, -az.sin()];
+                    let sample = self.array.beam_sample(scan_travel);
+                    self.bass_power[bin] += sample * sample;
+                }
+                self.bass_samples += 1;
+            }
             let x = beam_out + self.ocean.next_sample();
             *o = x.tanh();
             self.t += dt;
+            self.sample_index += 1;
         }
     }
 }
@@ -380,5 +415,29 @@ mod tests {
         a.set_targets(&scene);
         b.set_targets(&scene);
         assert_eq!(process_block(&mut a, 4096), process_block(&mut b, 4096));
+    }
+
+    #[test]
+    fn bass_scan_peaks_near_target_bearing() {
+        let mut engine =
+            engine_with_targets(&[45.0, 500.0, 0.0, 120.0, 6.0, 170.0, 1.0, 0.0]);
+        let _ = process_block(&mut engine, 32768);
+        let mut scan = vec![0.0; BASS_BINS];
+        engine.bass_scan(&mut scan);
+        let peak = scan
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(i, _)| i)
+            .unwrap();
+        let expected = (45.0 / (360.0 / BASS_BINS as f32)) as usize;
+        let circular_error = peak
+            .abs_diff(expected)
+            .min(BASS_BINS - peak.abs_diff(expected));
+        assert!(
+            circular_error <= 1,
+            "peak={}° expected=45°",
+            peak * 5
+        );
     }
 }
