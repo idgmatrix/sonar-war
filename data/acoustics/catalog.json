@@ -55,6 +55,24 @@
       "notes": "AIS와 교정 녹음을 결합한 1 kHz 이하 상선 측정. 선종·속력·방향에 따른 큰 변동을 보고한다."
     },
     {
+      "id": "macgillivray-dejong-2021",
+      "title": "A Reference Spectrum Model for Estimating Source Levels of Marine Shipping Based on Automated Identification System Data",
+      "kind": "peer_reviewed",
+      "url": "https://doi.org/10.3390/jmse9040369",
+      "doi": "10.3390/jmse9040369",
+      "accessed_on": "2026-09-03",
+      "notes": "ECHO 측정으로 검증한 JOMOPANS-ECHO 모델. 12개 AIS 선종, 선종별 기준 속력, 길이·속력 의존 스펙트럼과 20 Hz–20 kHz 약 6 dB 표준편차를 제공한다."
+    },
+    {
+      "id": "arveson-vendittis-2000",
+      "title": "Radiated noise characteristics of a modern cargo ship",
+      "kind": "peer_reviewed",
+      "url": "https://doi.org/10.1121/1.428344",
+      "doi": "10.1121/1.428344",
+      "accessed_on": "2026-09-03",
+      "notes": "173 m 벌크 화물선 한 척의 광범위 측정. 저주파 방사가 대체로 쌍극자형이며 16 kn에서 9 Hz 블레이드율 174 dB를 보고하지만 선종 전체 방향성 계수로 일반화하지 않는다."
+    },
+    {
       "id": "boem-sound-source-list-2023",
       "title": "BOEM Sound Source List — Vessels",
       "kind": "government",
@@ -118,6 +136,24 @@
               "confidence": "B",
               "uncertainty": "표본 선박 범위이며 보편적 최소·최대가 아니다. 선종·속력·방향과 전파 보정에 의존",
               "evidence_refs": ["mckenna-2012"]
+            },
+            {
+              "id": "jomopans_echo_validated_band_hz",
+              "value": { "min": 20, "max": 20000 },
+              "unit": "Hz",
+              "reference_conditions": "JOMOPANS-ECHO 단극자 스펙트럼 모델의 검증 대역; 6 m 고정 소스 수심",
+              "confidence": "B",
+              "uncertainty": "선종·속력·길이 기반 모집단 모델이며 개별 선박 예측 오차의 평균 표준편차는 약 6 dB",
+              "evidence_refs": ["macgillivray-dejong-2021"]
+            },
+            {
+              "id": "jomopans_echo_prediction_sigma_db",
+              "value": 6,
+              "unit": "dB",
+              "reference_conditions": "20 Hz–20 kHz decidecade 대역의 측정값과 모델값 잔차 표준편차 평균",
+              "confidence": "B",
+              "uncertainty": "모집단 평균이며 특정 주파수·선종에서 오차가 더 클 수 있음",
+              "evidence_refs": ["macgillivray-dejong-2021"]
             }
           ]
         },
@@ -128,7 +164,7 @@
           "parameters": []
         }
       ],
-      "evidence_refs": ["iso-17208-1-2016", "mckenna-2012", "boem-sound-source-list-2023"],
+      "evidence_refs": ["iso-17208-1-2016", "mckenna-2012", "macgillivray-dejong-2021", "arveson-vendittis-2000", "boem-sound-source-list-2023"],
       "limitations": [
         "177–188 dB 범위를 모든 상선에 무작위 적용하지 않는다.",
         "방향성, 흘수, 속력, 적재 상태를 별도 조건으로 모델링해야 한다.",

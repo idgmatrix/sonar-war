@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idgmatrix.github.io/sonar-war/schema/merchant-profiles.schema.json",
+  "title": "SSN-X 상선 음향 프로파일 기준선",
+  "type": "object",
+  "required": ["schema_version", "model", "profiles", "verification_case"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "1.0.0" },
+    "model": {
+      "type": "object",
+      "required": [
+        "id", "evidence_ref", "frequency_range_hz", "band_standard", "level_unit",
+        "source_representation", "source_depth_m", "uncertainty_std_db", "coefficients"
+      ],
+      "properties": {
+        "id": { "const": "jomopans-echo-2021" },
+        "evidence_ref": { "const": "macgillivray-dejong-2021" },
+        "frequency_range_hz": { "$ref": "#/$defs/range" },
+        "band_standard": { "const": "IEC 61260-1 decidecade centres, fi = 1000 * 10^(i/10) Hz" },
+        "level_unit": { "const": "dB re 1 µPa²/Hz @ 1 m" },
+        "source_representation": { "const": "monopole" },
+        "source_depth_m": { "const": 6 },
+        "uncertainty_std_db": { "const": 6 },
+        "coefficients": {
+          "type": "object",
+          "required": [
+            "reference_length_m", "speed_log10_multiplier_db", "length_log10_multiplier_db",
+            "high_frequency_k_db", "high_frequency_f1_numerator_hz_kn",
+            "high_frequency_damping", "cargo_low_frequency_limit_hz",
+            "cargo_low_frequency_k_db", "cargo_low_frequency_f1_numerator_hz_kn"
+          ],
+          "properties": {
+            "reference_length_m": { "const": 91.44 },
+            "speed_log10_multiplier_db": { "const": 60 },
+            "length_log10_multiplier_db": { "const": 20 },
+            "high_frequency_k_db": { "const": 191 },
+            "high_frequency_f1_numerator_hz_kn": { "const": 480 },
+            "high_frequency_damping": { "const": 3 },
+            "cargo_low_frequency_limit_hz": { "const": 100 },
+            "cargo_low_frequency_k_db": { "const": 208 },
+            "cargo_low_frequency_f1_numerator_hz_kn": { "const": 600 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 4,
+      "items": { "$ref": "#/$defs/profile" }
+    },
+    "verification_case": {
+      "type": "object",
+      "required": ["profile_id", "speed_kn", "length_m", "purpose", "anchors"],
+      "properties": {
+        "profile_id": { "type": "string" },
+        "speed_kn": { "type": "number", "exclusiveMinimum": 0 },
+        "length_m": { "type": "number", "exclusiveMinimum": 0 },
+        "purpose": { "type": "string", "minLength": 1 },
+        "anchors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["frequency_hz", "spectrum_level_db", "decidecade_level_db"],
+            "properties": {
+              "frequency_hz": { "type": "number", "exclusiveMinimum": 0 },
+              "spectrum_level_db": { "type": "number" },
+              "decidecade_level_db": { "type": "number" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "range": {
+      "type": "object",
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "number" },
+        "max": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "profile": {
+      "type": "object",
+      "required": [
+        "id", "vessel_class", "ais_rule", "reference_speed_kn", "mean_length_m",
+        "sample", "cargo_low_frequency_damping", "speed_model", "directionality",
+        "confidence", "evidence_refs", "limitations"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^merchant-[a-z-]+-jomopans-echo$" },
+        "vessel_class": {
+          "type": "string",
+          "enum": ["bulker", "containership", "vehicle_carrier", "tanker"]
+        },
+        "ais_rule": { "type": "string", "minLength": 1 },
+        "reference_speed_kn": { "type": "number", "exclusiveMinimum": 0 },
+        "mean_length_m": { "type": "number", "exclusiveMinimum": 0 },
+        "sample": {
+          "type": "object",
+          "required": ["unique_vessels", "measurements"],
+          "properties": {
+            "unique_vessels": { "type": "integer", "minimum": 1 },
+            "measurements": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "cargo_low_frequency_damping": { "type": "number", "enum": [0.8, 1.0] },
+        "speed_model": {
+          "type": "object",
+          "required": ["kind", "equation", "doubling_delta_db", "valid_range"],
+          "properties": {
+            "kind": { "const": "continuous_power_law" },
+            "equation": { "const": "60 * log10(speed_kn / reference_speed_kn)" },
+            "doubling_delta_db": { "type": "number" },
+            "valid_range": { "const": "not_reported; avoid unbounded extrapolation" }
+          },
+          "additionalProperties": false
+        },
+        "directionality": {
+          "type": "object",
+          "required": ["mode", "aspect", "correction_db", "confidence", "uncertainty"],
+          "properties": {
+            "mode": { "const": "isotropic_model_baseline" },
+            "aspect": { "const": "all" },
+            "correction_db": { "const": 0 },
+            "confidence": { "const": "C" },
+            "uncertainty": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "confidence": { "const": "B" },
+        "evidence_refs": {
+          "type": "array",
+          "contains": { "const": "macgillivray-dejong-2021" }
+        },
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,140 @@
+{
+  "$schema": "./schema/merchant-profiles.schema.json",
+  "schema_version": "1.0.0",
+  "model": {
+    "id": "jomopans-echo-2021",
+    "evidence_ref": "macgillivray-dejong-2021",
+    "frequency_range_hz": { "min": 20, "max": 20000 },
+    "band_standard": "IEC 61260-1 decidecade centres, fi = 1000 * 10^(i/10) Hz",
+    "level_unit": "dB re 1 µPa²/Hz @ 1 m",
+    "source_representation": "monopole",
+    "source_depth_m": 6,
+    "uncertainty_std_db": 6,
+    "coefficients": {
+      "reference_length_m": 91.44,
+      "speed_log10_multiplier_db": 60,
+      "length_log10_multiplier_db": 20,
+      "high_frequency_k_db": 191,
+      "high_frequency_f1_numerator_hz_kn": 480,
+      "high_frequency_damping": 3,
+      "cargo_low_frequency_limit_hz": 100,
+      "cargo_low_frequency_k_db": 208,
+      "cargo_low_frequency_f1_numerator_hz_kn": 600
+    }
+  },
+  "profiles": [
+    {
+      "id": "merchant-bulker-jomopans-echo",
+      "vessel_class": "bulker",
+      "ais_rule": "AIS 70 또는 75–79이며 speed ≤ 16 kn",
+      "reference_speed_kn": 13.9,
+      "mean_length_m": 211,
+      "sample": { "unique_vessels": 360, "measurements": 850 },
+      "cargo_low_frequency_damping": 0.8,
+      "speed_model": {
+        "kind": "continuous_power_law",
+        "equation": "60 * log10(speed_kn / reference_speed_kn)",
+        "doubling_delta_db": 18.0618,
+        "valid_range": "not_reported; avoid unbounded extrapolation"
+      },
+      "directionality": {
+        "mode": "isotropic_model_baseline",
+        "aspect": "all",
+        "correction_db": 0,
+        "confidence": "C",
+        "uncertainty": "JOMOPANS-ECHO는 등방성 점음원을 가정한다. Arveson–Vendittis의 단일 벌크선 측정은 저주파에서 대체로 쌍극자형 방사를 보였으므로 방향별 보정값은 별도 자료 없이는 적용하지 않는다."
+      },
+      "confidence": "B",
+      "evidence_refs": ["macgillivray-dejong-2021", "arveson-vendittis-2000"],
+      "limitations": ["표본 평균이지 개별 벌크선 서명이 아니다.", "20 Hz 미만의 블레이드율 톤은 모델에 포함되지 않는다."]
+    },
+    {
+      "id": "merchant-containership-jomopans-echo",
+      "vessel_class": "containership",
+      "ais_rule": "AIS 71–74 전 속력 또는 AIS 70·75–79이며 speed > 16 kn",
+      "reference_speed_kn": 18.0,
+      "mean_length_m": 294,
+      "sample": { "unique_vessels": 195, "measurements": 440 },
+      "cargo_low_frequency_damping": 0.8,
+      "speed_model": {
+        "kind": "continuous_power_law",
+        "equation": "60 * log10(speed_kn / reference_speed_kn)",
+        "doubling_delta_db": 18.0618,
+        "valid_range": "not_reported; avoid unbounded extrapolation"
+      },
+      "directionality": {
+        "mode": "isotropic_model_baseline",
+        "aspect": "all",
+        "correction_db": 0,
+        "confidence": "C",
+        "uncertainty": "원 모델은 등방성을 가정하며 선수·정횡·선미별 보정 계수를 제공하지 않는다."
+      },
+      "confidence": "B",
+      "evidence_refs": ["macgillivray-dejong-2021"],
+      "limitations": ["AIS만으로 고속 일반 화물선과 컨테이너선을 완전히 구분할 수 없다.", "속력 유효 범위가 보고되지 않아 극저속·초고속 외삽을 금지한다."]
+    },
+    {
+      "id": "merchant-vehicle-carrier-jomopans-echo",
+      "vessel_class": "vehicle_carrier",
+      "ais_rule": "AIS만으로 별도 식별 불가; 외부 선박 제원 필요",
+      "reference_speed_kn": 15.8,
+      "mean_length_m": 194,
+      "sample": { "unique_vessels": 65, "measurements": 141 },
+      "cargo_low_frequency_damping": 1.0,
+      "speed_model": {
+        "kind": "continuous_power_law",
+        "equation": "60 * log10(speed_kn / reference_speed_kn)",
+        "doubling_delta_db": 18.0618,
+        "valid_range": "not_reported; avoid unbounded extrapolation"
+      },
+      "directionality": {
+        "mode": "isotropic_model_baseline",
+        "aspect": "all",
+        "correction_db": 0,
+        "confidence": "C",
+        "uncertainty": "원 모델은 등방성을 가정하며 차량운반선의 방향별 측정 계수를 제공하지 않는다."
+      },
+      "confidence": "B",
+      "evidence_refs": ["macgillivray-dejong-2021"],
+      "limitations": ["AIS ship type만으로 분류할 수 없어 시나리오 메타데이터가 필요하다.", "표본 평균이지 개별 차량운반선 서명이 아니다."]
+    },
+    {
+      "id": "merchant-tanker-jomopans-echo",
+      "vessel_class": "tanker",
+      "ais_rule": "AIS 80–89",
+      "reference_speed_kn": 12.4,
+      "mean_length_m": 186,
+      "sample": { "unique_vessels": 53, "measurements": 129 },
+      "cargo_low_frequency_damping": 1.0,
+      "speed_model": {
+        "kind": "continuous_power_law",
+        "equation": "60 * log10(speed_kn / reference_speed_kn)",
+        "doubling_delta_db": 18.0618,
+        "valid_range": "not_reported; avoid unbounded extrapolation"
+      },
+      "directionality": {
+        "mode": "isotropic_model_baseline",
+        "aspect": "all",
+        "correction_db": 0,
+        "confidence": "C",
+        "uncertainty": "원 모델은 등방성을 가정하며 탱커의 방향별 측정 계수를 제공하지 않는다."
+      },
+      "confidence": "B",
+      "evidence_refs": ["macgillivray-dejong-2021"],
+      "limitations": ["적재 상태와 추진계·정비 상태가 AIS 입력에 없으며 6 dB 통계 불확실성에 포함된다.", "표본 평균이지 개별 탱커 서명이 아니다."]
+    }
+  ],
+  "verification_case": {
+    "profile_id": "merchant-bulker-jomopans-echo",
+    "speed_kn": 13.5,
+    "length_m": 211,
+    "purpose": "공식 Excel 계산식 회귀. 10 Hz 앵커는 계산기 구현 확인용이며 모델의 검증 대역은 20 Hz부터다.",
+    "anchors": [
+      { "frequency_hz": 10.0, "spectrum_level_db": 157.233989, "decidecade_level_db": 160.870109 },
+      { "frequency_hz": 63.095734, "spectrum_level_db": 164.236752, "decidecade_level_db": 175.872872 },
+      { "frequency_hz": 100.0, "spectrum_level_db": 155.735834, "decidecade_level_db": 169.371954 },
+      { "frequency_hz": 1000.0, "spectrum_level_db": 137.757591, "decidecade_level_db": 161.393710 },
+      { "frequency_hz": 19952.623150, "spectrum_level_db": 111.516992, "decidecade_level_db": 148.153111 }
+    ]
+  }
+}

@@ -31,11 +31,47 @@ interface Catalog {
   }>;
 }
 
+interface MerchantProfiles {
+  model: {
+    evidence_ref: string;
+    frequency_range_hz: { min: number; max: number };
+    uncertainty_std_db: number;
+    coefficients: Record<string, number>;
+  };
+  profiles: Array<{
+    id: string;
+    vessel_class: string;
+    reference_speed_kn: number;
+    cargo_low_frequency_damping: number;
+    speed_model: { doubling_delta_db: number; valid_range: string };
+    directionality: { mode: string; correction_db: number; confidence: Confidence };
+  }>;
+  verification_case: {
+    profile_id: string;
+    speed_kn: number;
+    length_m: number;
+    anchors: Array<{
+      frequency_hz: number;
+      spectrum_level_db: number;
+      decidecade_level_db: number;
+    }>;
+  };
+}
+
 const catalog = JSON.parse(
   readFileSync(new URL('../data/acoustics/catalog.json', import.meta.url), 'utf8'),
 ) as Catalog;
 const schema = JSON.parse(
   readFileSync(new URL('../data/acoustics/schema/catalog.schema.json', import.meta.url), 'utf8'),
+) as object;
+const merchantProfiles = JSON.parse(
+  readFileSync(new URL('../data/acoustics/merchant-profiles.json', import.meta.url), 'utf8'),
+) as MerchantProfiles;
+const merchantSchema = JSON.parse(
+  readFileSync(
+    new URL('../data/acoustics/schema/merchant-profiles.schema.json', import.meta.url),
+    'utf8',
+  ),
 ) as object;
 
 describe('음향 소스 카탈로그', () => {
@@ -110,6 +146,79 @@ describe('음향 소스 카탈로그', () => {
       const source = catalog.sources.find((candidate) => candidate.id === id)!;
       expect(source.status).toBe('research_required');
       expect(source.confidence).toBe('C');
+    }
+  });
+});
+
+describe('JOMOPANS-ECHO 상선 프로파일', () => {
+  it('전용 JSON Schema를 통과하고 네 화물선 계열을 구분한다', () => {
+    const validator = new Ajv2020({ allErrors: true });
+    addFormats(validator);
+    const validate = validator.compile(merchantSchema);
+    expect(validate(merchantProfiles), JSON.stringify(validate.errors, null, 2)).toBe(true);
+
+    expect(merchantProfiles.profiles.map((profile) => profile.vessel_class)).toEqual([
+      'bulker',
+      'containership',
+      'vehicle_carrier',
+      'tanker',
+    ]);
+    expect(merchantProfiles.model.frequency_range_hz).toEqual({ min: 20, max: 20_000 });
+    expect(merchantProfiles.model.uncertainty_std_db).toBe(6);
+  });
+
+  it('방향성 미확정값과 속력 외삽 한계를 숨기지 않는다', () => {
+    const referenceIds = new Set(catalog.references.map((reference) => reference.id));
+    expect(referenceIds.has(merchantProfiles.model.evidence_ref)).toBe(true);
+
+    for (const profile of merchantProfiles.profiles) {
+      expect(profile.directionality).toMatchObject({
+        mode: 'isotropic_model_baseline',
+        correction_db: 0,
+        confidence: 'C',
+      });
+      expect(profile.speed_model.valid_range).toContain('avoid unbounded extrapolation');
+      expect(profile.speed_model.doubling_delta_db).toBeCloseTo(60 * Math.log10(2), 4);
+    }
+  });
+
+  it('공식 보조 계산기의 벌크선 스펙트럼 앵커를 재현한다', () => {
+    const coefficients = merchantProfiles.model.coefficients;
+    const verification = merchantProfiles.verification_case;
+    const profile = merchantProfiles.profiles.find(
+      (candidate) => candidate.id === verification.profile_id,
+    )!;
+
+    for (const anchor of verification.anchors) {
+      const lowFrequency = anchor.frequency_hz < coefficients.cargo_low_frequency_limit_hz;
+      const exponent = lowFrequency ? 2 : 0;
+      const k = lowFrequency
+        ? coefficients.cargo_low_frequency_k_db
+        : coefficients.high_frequency_k_db;
+      const damping = lowFrequency
+        ? profile.cargo_low_frequency_damping
+        : coefficients.high_frequency_damping;
+      const f1 =
+        (lowFrequency
+          ? coefficients.cargo_low_frequency_f1_numerator_hz_kn
+          : coefficients.high_frequency_f1_numerator_hz_kn) / profile.reference_speed_kn;
+      const frequencyPower = 0.5 * (exponent + 2);
+      const spectrumLevel =
+        k -
+        10 * (exponent + 2) * Math.log10(f1) +
+        5 * exponent * Math.log10(anchor.frequency_hz) -
+        10 *
+          Math.log10(
+            (1 - (anchor.frequency_hz / f1) ** frequencyPower) ** 2 + damping ** 2,
+          ) +
+        coefficients.speed_log10_multiplier_db *
+          Math.log10(verification.speed_kn / profile.reference_speed_kn) +
+        coefficients.length_log10_multiplier_db *
+          Math.log10(verification.length_m / coefficients.reference_length_m);
+      const bandLevel = spectrumLevel + 10 * Math.log10(0.231 * anchor.frequency_hz);
+
+      expect(spectrumLevel).toBeCloseTo(anchor.spectrum_level_db, 5);
+      expect(bandLevel).toBeCloseTo(anchor.decidecade_level_db, 5);
     }
   });
 });
