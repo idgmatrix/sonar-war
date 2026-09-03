@@ -16,6 +16,8 @@
 pub mod analysis;
 pub mod beamform;
 pub mod noise;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod offline;
 pub mod output;
 pub mod physics;
 pub mod propagation;
@@ -86,6 +88,18 @@ fn fibonacci_sphere(n: usize, radius: f32) -> Vec<[f32; 3]> {
 struct Target {
     source: SourceVoice,
     propagation: PropagationProcessor,
+}
+
+/// 네이티브 오프라인 검증에서 한 샘플의 계층 경계를 기록한 값.
+///
+/// `source_1m_upa`는 수신기 시각에 각 Source가 방사한 원시 음압의 합,
+/// `hydrophone_0_upa`는 전파 후 첫 하이드로폰 음압이다. 두 FS 값은 출력 제한 전/후다.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct DspTraceSample {
+    pub source_1m_upa: f32,
+    pub hydrophone_0_upa: f32,
+    pub receiver_fs: f32,
+    pub output_fs: f32,
 }
 
 impl Target {
@@ -212,30 +226,78 @@ impl DspEngine {
 
     /// 샘플 블럭 1개 합성 (모노 — 채널 복사는 호스트).
     pub fn process(&mut self, out: &mut [f32]) {
+        for sample in out {
+            *sample = self.process_sample::<false>(None);
+        }
+    }
+}
+
+impl DspEngine {
+    #[inline]
+    fn process_sample<const TRACE: bool>(&mut self, mut trace: Option<&mut DspTraceSample>) -> f32 {
         // 빔포머 조향(명세서 §3.2, τᵢ = pᵢ·û/c)의 û는 **파동 진행 방향** —
         // 소스 방향 û_src의 파동은 −û_src로 진행하므로 조향 벡터를 반전시킨다.
         let travel = [-self.beam[0], -self.beam[1], -self.beam[2]];
         let dt = 1.0 / self.sample_rate as f64;
-        for o in out.iter_mut() {
-            let t = self.t;
-            self.hydrophone_frame.clear();
+        let t = self.t;
+        self.hydrophone_frame.clear();
 
-            for tgt in &mut self.targets {
-                tgt.propagation.render_into(
-                    &tgt.source,
-                    t,
-                    self.sample_rate,
-                    &mut self.hydrophone_frame,
-                );
-                tgt.source.advance();
+        let mut source_1m_upa = 0.0;
+        for target in &mut self.targets {
+            if TRACE {
+                let source = target.source.sample_at(t, 0.0);
+                source_1m_upa += source.tonal_pressure_1m_upa.iter().sum::<f32>()
+                    + source.broadband_pressure_1m_upa;
             }
+            target.propagation.render_into(
+                &target.source,
+                t,
+                self.sample_rate,
+                &mut self.hydrophone_frame,
+            );
+            target.source.advance();
+        }
 
-            let x = self.receiver.process_frame(&self.hydrophone_frame, travel);
-            let receiver = &self.receiver;
-            self.bass
-                .observe(|direction| receiver.beam_sample(direction));
-            *o = output::soft_limit(x);
-            self.t += dt;
+        if TRACE {
+            let trace = trace
+                .as_deref_mut()
+                .expect("TRACE=true requires a trace sample");
+            trace.source_1m_upa = source_1m_upa;
+            trace.hydrophone_0_upa = self
+                .hydrophone_frame
+                .pressure_upa
+                .first()
+                .copied()
+                .unwrap_or(0.0);
+        }
+
+        let receiver_fs = self.receiver.process_frame(&self.hydrophone_frame, travel);
+        let receiver = &self.receiver;
+        self.bass
+            .observe(|direction| receiver.beam_sample(direction));
+        let output_fs = output::soft_limit(receiver_fs);
+
+        if TRACE {
+            let trace = trace.expect("TRACE=true requires a trace sample");
+            trace.receiver_fs = receiver_fs;
+            trace.output_fs = output_fs;
+        }
+        self.t += dt;
+        output_fs
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl DspEngine {
+    /// 실시간 경로와 같은 상태 전이를 수행하며 계층별 샘플을 함께 기록한다.
+    pub fn process_traced(&mut self, out: &mut [f32], trace: &mut [DspTraceSample]) {
+        assert_eq!(
+            out.len(),
+            trace.len(),
+            "output and trace lengths must match"
+        );
+        for (sample, trace_sample) in out.iter_mut().zip(trace) {
+            *sample = self.process_sample::<true>(Some(trace_sample));
         }
     }
 }
@@ -351,6 +413,27 @@ mod tests {
         a.set_targets(&scene);
         b.set_targets(&scene);
         assert_eq!(process_block(&mut a, 4096), process_block(&mut b, 4096));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn traced_processing_matches_realtime_output_exactly() {
+        let scene = [0.0, 1000.0, 30.0, 120.0, 5.0, 155.0, 0.4, 5.0];
+        let mut realtime = engine_with_targets(&scene);
+        let mut traced = engine_with_targets(&scene);
+        let expected = process_block(&mut realtime, 4096);
+        let mut actual = vec![0.0; 4096];
+        let mut trace = vec![DspTraceSample::default(); 4096];
+        traced.process_traced(&mut actual, &mut trace);
+
+        assert_eq!(actual, expected);
+        assert!(trace.iter().all(|sample| sample.output_fs.is_finite()));
+        assert!(trace
+            .iter()
+            .zip(&actual)
+            .all(|(sample, output)| sample.output_fs == *output));
+        assert!(trace.iter().any(|sample| sample.source_1m_upa != 0.0));
+        assert!(trace.iter().any(|sample| sample.hydrophone_0_upa != 0.0));
     }
 
     #[test]

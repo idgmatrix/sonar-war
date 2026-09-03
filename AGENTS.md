@@ -14,6 +14,7 @@ Stack: TypeScript (game/UI/sim) + **Rust** (all acoustic physics and audio synth
 npm run dev                 # Vite dev server (audio only works on localhost — see pitfalls)
 npm run build               # tsc -b && vite build
 npm test                    # vitest run (TS tests in tests/)
+npm run dsp:render -- --out artifacts/offline/reference_scene  # native float WAV + layer trace + metrics
 npx vitest run tests/acousticEntity.test.ts -t "name"   # single TS test
 npm run wasm:test           # cargo test --manifest-path dsp-core/Cargo.toml (native Rust tests)
 cargo test --manifest-path dsp-core/Cargo.toml <name>   # single Rust test
@@ -29,7 +30,7 @@ Path aliases: `@/` → `src/`, `@dsp/` → `dsp-core/pkg/` (both Vite and tsconf
 
 Two engines with a strict division of labor:
 
-- **`dsp-core/` (Rust/WASM) — the only place audio is synthesized.** `src/lib.rs` exposes a stateful `DspEngine` via wasm-bindgen: `set_targets` / `set_ocean` / `set_beam` / `process`. Control pipeline: `SourceSpectrum` (1 m emission) → `PropagatedSpectrum` (TL/Doppler/array arrival delays) → `ReceiverVoiceParameters` (dB re 1 µPa to full scale). The real-time path mirrors it: `SourceVoice` emits 1 m µPa samples → `PropagationProcessor` accumulates a reusable physical `HydrophoneFrame` → `ReceiverArray` converts to full scale, performs full delay-and-sum beamforming (16-hydrophone spherical array, spec §3.2 `τᵢ = pᵢ·û/c`), and adds Coates/Wenz ambient noise. `BassAnalyzer` reads the array without advancing it; `output::soft_limit` limits only the main audio path. `DspEngine` orchestrates these layers. Modules: `source/`, `propagation/`, `receiver/`, `analysis`, `output`, `physics/`, `noise/`, `beamform/`; the unit and ownership contract is `docs/DSP 계층 계약.md`.
+- **`dsp-core/` (Rust/WASM) — the only place audio is synthesized.** `src/lib.rs` exposes a stateful `DspEngine` via wasm-bindgen: `set_targets` / `set_ocean` / `set_beam` / `process`. Control pipeline: `SourceSpectrum` (1 m emission) → `PropagatedSpectrum` (TL/Doppler/array arrival delays) → `ReceiverVoiceParameters` (dB re 1 µPa to full scale). The real-time path mirrors it: `SourceVoice` emits 1 m µPa samples → `PropagationProcessor` accumulates a reusable physical `HydrophoneFrame` → `ReceiverArray` converts to full scale, performs full delay-and-sum beamforming (16-hydrophone spherical array, spec §3.2 `τᵢ = pᵢ·û/c`), and adds Coates/Wenz ambient noise. `BassAnalyzer` reads the array without advancing it; `output::soft_limit` limits only the main audio path. `DspEngine` orchestrates these layers. Native-only `process_traced` uses the same sample path and `offline.rs` writes float WAV, layer CSV, and block metrics. The unit and ownership contract is `docs/DSP 계층 계약.md` and the offline contract is `docs/오프라인 DSP 검증.md`.
   - Level convention: **1 Pa = 1,000,000 µPa = 1.0 full scale (120 dB re 1µPa)**.
   - Rust coordinate frame: x=forward, y=down(depth), z=starboard. (The TS sim frame is different: x=east, depth +down, z=south — convert at the boundary.)
   - **`process()` must be called exactly once per audio block** — the engine is stateful (time accumulator, noise ring buffers). Calling it per channel makes time run N× faster. The host copies the mono output to all channels.

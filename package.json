@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "dsp:render": "cargo run --release --manifest-path dsp-core/Cargo.toml --example render_scene --",
     "wasm:build": "wasm-pack build dsp-core --target web --out-dir pkg --dev",
     "wasm:build:release": "wasm-pack build dsp-core --target web --out-dir pkg --release",
     "wasm:test": "cargo test --manifest-path dsp-core/Cargo.toml"
