@@ -133,13 +133,15 @@ impl Target {
             hydrophones,
             DEFAULT_SOUND_SPEED,
         );
-        let propagation = PropagationProcessor::new(&source, &propagated);
+        let history_samples = max_delay_samples * 2 + 2;
+        let propagation =
+            PropagationProcessor::new(&source, &propagated, sample_rate, history_samples);
         let seed = 0x9E37_79B9_7F4A_7C15
             ^ (descriptor.blade_count as u64).wrapping_mul(0x2545_F491_4F6C_DD1D);
 
         Self {
             // 지연 범위 0..2R/c (구형 어레이) → 2× 최대단일지연 용량
-            source: SourceVoice::new(source, sample_rate, max_delay_samples * 2 + 2, seed),
+            source: SourceVoice::new(source, sample_rate, history_samples, seed),
             propagation,
         }
     }
@@ -167,10 +169,12 @@ impl Target {
             hydrophones,
             DEFAULT_SOUND_SPEED,
         );
-        let propagation = PropagationProcessor::new(&source, &propagated);
+        let history_samples = max_delay_samples * 2 + 2;
+        let propagation =
+            PropagationProcessor::new(&source, &propagated, sample_rate, history_samples);
         let seed = 0xA076_1D64_78BD_642F ^ (profile as u64).wrapping_mul(0xE703_7ED1_A0B4_28DB);
         Some(Self {
-            source: SourceVoice::new(source, sample_rate, max_delay_samples * 2 + 2, seed),
+            source: SourceVoice::new(source, sample_rate, history_samples, seed),
             propagation,
         })
     }
@@ -310,6 +314,7 @@ impl DspEngine {
                 &mut self.hydrophone_frame,
             );
             target.source.advance();
+            target.propagation.advance_broadband(&target.source);
         }
 
         if TRACE {

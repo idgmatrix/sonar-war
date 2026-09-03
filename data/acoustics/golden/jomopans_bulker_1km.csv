@@ -1,0 +1,8 @@
+# JOMOPANS-ECHO bulker, speed=13.5 kn, length=211 m, range=1000 m
+# TL = 20log10(range_m) + Thorp absorption(f_kHz) * range_km
+frequency_hz,source_spectrum_db,transmission_loss_db,received_spectrum_db
+50.4,167.244853,60.003007,107.241846
+201.6,151.631247,60.007606,91.623641
+1015.9,137.617299,60.126949,77.490350
+5120.0,123.373643,62.955917,60.417726
+10240.0,117.324957,69.876265,47.448693

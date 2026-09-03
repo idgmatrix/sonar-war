@@ -108,6 +108,7 @@ mod tests {
                 frequency_hz: 10.0 * (index + 1) as f32,
                 level_db_re_1upa: 100.0 - index as f32 * 6.0,
             }),
+            broadband_bands: Vec::new(),
             broadband_level_db_re_1upa: 90.0,
             modulation_rate_hz: 10.0,
             hydrophone_delays_s: vec![0.0, 0.001],

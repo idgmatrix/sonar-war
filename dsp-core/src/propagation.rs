@@ -32,10 +32,17 @@ pub struct ReceivedLine {
     pub level_db_re_1upa: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReceivedBand {
+    pub center_hz: f32,
+    pub spectrum_level_db_re_1upa2_per_hz: f32,
+}
+
 /// 단일 표적이 수신 배열 위치에 만든 스펙트럼과 공간 지연.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropagatedSpectrum {
     pub tonal_lines: [ReceivedLine; TONAL_HARMONICS as usize],
+    pub broadband_bands: Vec<ReceivedBand>,
     pub broadband_level_db_re_1upa: f32,
     pub modulation_rate_hz: f32,
     /// 하이드로폰별 인과적 읽기 지연(s). 모두 0 이상이다.
@@ -68,12 +75,20 @@ impl HydrophoneFrame {
 pub struct PropagationProcessor {
     tonal_linear_loss: [f32; TONAL_HARMONICS as usize],
     broadband_linear_loss: f32,
+    broadband_band_linear_loss: Vec<f32>,
+    broadband_history_upa: Vec<f32>,
+    broadband_history_position: usize,
     doppler_factor: f32,
     hydrophone_delays_s: Vec<f32>,
 }
 
 impl PropagationProcessor {
-    pub fn new(source: &SourceSpectrum, propagated: &PropagatedSpectrum) -> Self {
+    pub fn new(
+        source: &SourceSpectrum,
+        propagated: &PropagatedSpectrum,
+        sample_rate: f32,
+        history_samples: usize,
+    ) -> Self {
         let tonal_linear_loss = std::array::from_fn(|index| {
             let source_level = source.tonal_lines[index].level_db_re_1upa_at_1m;
             let received_level = propagated.tonal_lines[index].level_db_re_1upa;
@@ -87,14 +102,63 @@ impl PropagationProcessor {
             (propagated.broadband_level_db_re_1upa - source.broadband_level_db_re_1upa_at_1m)
                 / 20.0,
         );
+        let nyquist_guard = sample_rate * 0.45;
+        let broadband_band_linear_loss = source
+            .broadband_bands
+            .iter()
+            .zip(&propagated.broadband_bands)
+            .filter(|(source, _)| source.center_hz < nyquist_guard)
+            .map(|(source, received)| {
+                10f32.powf(
+                    (received.spectrum_level_db_re_1upa2_per_hz
+                        - source.spectrum_level_db_re_1upa2_per_hz_at_1m)
+                        / 20.0,
+                )
+            })
+            .collect();
         let doppler_factor = propagated.tonal_lines[0].frequency_hz
             / source.tonal_lines[0].frequency_hz.max(f32::MIN_POSITIVE);
         Self {
             tonal_linear_loss,
             broadband_linear_loss,
+            broadband_band_linear_loss,
+            broadband_history_upa: vec![0.0; history_samples.max(2)],
+            broadband_history_position: 0,
             doppler_factor,
             hydrophone_delays_s: propagated.hydrophone_delays_s.clone(),
         }
+    }
+
+    /// Source의 현재 대역 압력에 대역별 TL을 적용해 전파 계층 지연 버퍼에 기록한다.
+    #[inline]
+    pub fn advance_broadband(&mut self, source: &SourceVoice) {
+        if self.broadband_band_linear_loss.is_empty() {
+            return;
+        }
+        let propagated = source
+            .broadband_band_pressures_1m_upa()
+            .zip(&self.broadband_band_linear_loss)
+            .map(|(pressure, loss)| pressure * loss)
+            .sum();
+        self.broadband_history_upa[self.broadband_history_position] = propagated;
+        self.broadband_history_position =
+            (self.broadband_history_position + 1) % self.broadband_history_upa.len();
+    }
+
+    fn read_broadband(&self, offset_samples: f32) -> f32 {
+        let capacity = self.broadband_history_upa.len();
+        let offset = offset_samples.max(0.0).min(capacity as f32 - 2.0);
+        let whole = offset.floor() as usize;
+        let fraction = offset - whole as f32;
+        let newest = if self.broadband_history_position == 0 {
+            capacity - 1
+        } else {
+            self.broadband_history_position - 1
+        };
+        let first = newest.wrapping_sub(whole) % capacity;
+        let second = newest.wrapping_sub(whole + 1) % capacity;
+        self.broadband_history_upa[first] * (1.0 - fraction)
+            + self.broadband_history_upa[second] * fraction
     }
 
     /// Source 샘플을 전파해 재사용 `HydrophoneFrame`에 누적한다.
@@ -116,8 +180,12 @@ impl PropagationProcessor {
                 .zip(self.tonal_linear_loss)
                 .map(|(pressure, loss)| pressure * loss)
                 .sum::<f32>();
-            frame.pressure_upa[hydrophone] +=
-                tonal + sample.broadband_pressure_1m_upa * self.broadband_linear_loss;
+            let broadband = if self.broadband_band_linear_loss.is_empty() {
+                sample.broadband_pressure_1m_upa * self.broadband_linear_loss
+            } else {
+                self.read_broadband(delay_s * sample_rate)
+            };
+            frame.pressure_upa[hydrophone] += tonal + broadband;
         }
     }
 }
@@ -163,11 +231,31 @@ pub fn propagate(
                 - transmission_loss_db(range_m, shifted_frequency_hz / 1000.0),
         }
     });
-    let broadband_level_db_re_1upa = source.broadband_level_db_re_1upa_at_1m
-        - transmission_loss_db(range_m, BROADBAND_REFERENCE_KHZ);
+    let broadband_bands = source
+        .broadband_bands
+        .iter()
+        .map(|band| ReceivedBand {
+            center_hz: band.center_hz,
+            spectrum_level_db_re_1upa2_per_hz: band.spectrum_level_db_re_1upa2_per_hz_at_1m
+                - transmission_loss_db(range_m, band.center_hz / 1000.0),
+        })
+        .collect::<Vec<_>>();
+    let broadband_level_db_re_1upa = if broadband_bands.is_empty() {
+        source.broadband_level_db_re_1upa_at_1m
+            - transmission_loss_db(range_m, BROADBAND_REFERENCE_KHZ)
+    } else {
+        let pressure_power_upa2: f32 = broadband_bands
+            .iter()
+            .map(|band| {
+                10f32.powf(band.spectrum_level_db_re_1upa2_per_hz / 10.0) * 0.231 * band.center_hz
+            })
+            .sum();
+        10.0 * pressure_power_upa2.log10()
+    };
 
     PropagatedSpectrum {
         tonal_lines,
+        broadband_bands,
         broadband_level_db_re_1upa,
         modulation_rate_hz: source.modulation_rate_hz * doppler,
         hydrophone_delays_s,
@@ -178,7 +266,34 @@ pub fn propagate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::merchant::{self, MerchantProfile};
     use crate::source::source_spectrum;
+
+    fn measured_psd_db(samples: &[f32], sample_rate: f32, frequency_hz: f32) -> f32 {
+        const SEGMENT: usize = 8192;
+        let mut psd_sum = 0.0f64;
+        let mut segments = 0usize;
+        let (chunks, _) = samples.as_chunks::<SEGMENT>();
+        for chunk in chunks {
+            let mut re = 0.0f64;
+            let mut im = 0.0f64;
+            let mut window_energy = 0.0f64;
+            for (index, &sample) in chunk.iter().enumerate() {
+                let window = 0.5
+                    - 0.5
+                        * (2.0 * std::f64::consts::PI * index as f64 / (SEGMENT - 1) as f64).cos();
+                let phase = 2.0 * std::f64::consts::PI * frequency_hz as f64 * index as f64
+                    / sample_rate as f64;
+                let value = sample as f64 * window;
+                re += value * phase.cos();
+                im -= value * phase.sin();
+                window_energy += window * window;
+            }
+            psd_sum += 2.0 * (re * re + im * im) / (sample_rate as f64 * window_energy);
+            segments += 1;
+        }
+        10.0 * (psd_sum / segments as f64).max(f64::MIN_POSITIVE).log10() as f32
+    }
 
     #[test]
     fn range_changes_propagation_but_not_source() {
@@ -241,6 +356,119 @@ mod tests {
     }
 
     #[test]
+    fn merchant_bands_receive_frequency_dependent_loss() {
+        let source = merchant::source_spectrum(MerchantProfile::Bulker, 13.5, 211.0);
+        let propagated = propagate(
+            &source,
+            PropagationGeometry {
+                bearing_deg: 0.0,
+                range_m: 50_000.0,
+                source_depth_m: 6.0,
+                receiver_depth_m: 100.0,
+                relative_velocity_ms: 0.0,
+            },
+            &[],
+            1500.0,
+        );
+        assert_eq!(
+            source.broadband_bands.len(),
+            propagated.broadband_bands.len()
+        );
+        for (source_band, received_band) in source
+            .broadband_bands
+            .iter()
+            .zip(&propagated.broadband_bands)
+        {
+            let expected_loss = transmission_loss_db(50_000.0, source_band.center_hz / 1000.0);
+            let actual_loss = source_band.spectrum_level_db_re_1upa2_per_hz_at_1m
+                - received_band.spectrum_level_db_re_1upa2_per_hz;
+            assert!((actual_loss - expected_loss).abs() < 0.002);
+        }
+        let low_loss = source.broadband_bands[7].spectrum_level_db_re_1upa2_per_hz_at_1m
+            - propagated.broadband_bands[7].spectrum_level_db_re_1upa2_per_hz;
+        let high_loss = source.broadband_bands[27].spectrum_level_db_re_1upa2_per_hz_at_1m
+            - propagated.broadband_bands[27].spectrum_level_db_re_1upa2_per_hz;
+        assert!(
+            high_loss > low_loss + 40.0,
+            "low={low_loss} high={high_loss}"
+        );
+    }
+
+    #[test]
+    fn synthesized_merchant_psd_tracks_propagated_band_targets() {
+        let sample_rate = 44_100.0;
+        let source_spectrum = merchant::source_spectrum(MerchantProfile::Bulker, 13.5, 211.0);
+        let propagated = propagate(
+            &source_spectrum,
+            PropagationGeometry {
+                bearing_deg: 0.0,
+                range_m: 1000.0,
+                source_depth_m: 6.0,
+                receiver_depth_m: 6.0,
+                relative_velocity_ms: 0.0,
+            },
+            &[[0.0, 0.0, 0.0]],
+            1500.0,
+        );
+        let golden = include_str!("../../data/acoustics/golden/jomopans_bulker_1km.csv")
+            .lines()
+            .filter(|line| {
+                !line.is_empty() && !line.starts_with('#') && !line.starts_with("frequency_hz")
+            })
+            .map(|line| {
+                let values = line
+                    .split(',')
+                    .map(|value| value.parse::<f32>().expect("상선 전파 골든 숫자"))
+                    .collect::<Vec<_>>();
+                assert_eq!(values.len(), 4);
+                let source_band = source_spectrum
+                    .broadband_bands
+                    .iter()
+                    .find(|band| (band.center_hz - values[0]).abs() < 0.01)
+                    .expect("Source 검증 중심 주파수");
+                let received_band = propagated
+                    .broadband_bands
+                    .iter()
+                    .find(|band| (band.center_hz - values[0]).abs() < 0.01)
+                    .expect("Propagation 검증 중심 주파수");
+                assert!(
+                    (source_band.spectrum_level_db_re_1upa2_per_hz_at_1m - values[1]).abs() < 0.002
+                );
+                assert!(
+                    (transmission_loss_db(1000.0, values[0] / 1000.0) - values[2]).abs() < 0.002
+                );
+                assert!(
+                    (received_band.spectrum_level_db_re_1upa2_per_hz - values[3]).abs() < 0.002
+                );
+                (values[0], values[3])
+            })
+            .collect::<Vec<_>>();
+        let mut source = SourceVoice::new(source_spectrum, sample_rate, 4, 7);
+        let mut processor =
+            PropagationProcessor::new(source.spectrum(), &propagated, sample_rate, 4);
+        let mut frame = HydrophoneFrame::new(1);
+        let mut next_sample = || {
+            source.advance();
+            processor.advance_broadband(&source);
+            frame.clear();
+            processor.render_into(&source, 0.0, sample_rate, &mut frame);
+            frame.pressure_upa[0]
+        };
+        for _ in 0..32_768 {
+            next_sample();
+        }
+        let samples = (0..262_144).map(|_| next_sample()).collect::<Vec<_>>();
+        for (frequency, expected) in golden {
+            let measured = measured_psd_db(&samples, sample_rate, frequency);
+            assert!(
+                (measured - expected).abs() <= 2.5,
+                "{frequency} Hz: measured={measured:.2} expected={expected:.2} error={:.2} dB",
+                measured - expected
+            );
+        }
+    }
+
+    #[test]
     fn processor_writes_reusable_physical_pressure_frame() {
         let spectrum = source_spectrum(120.0, 5, 120.0, 0.0);
         let propagated = propagate(
@@ -255,7 +483,7 @@ mod tests {
             &[[0.0, 0.0, 0.0]],
             1500.0,
         );
-        let processor = PropagationProcessor::new(&spectrum, &propagated);
+        let processor = PropagationProcessor::new(&spectrum, &propagated, 44_100.0, 4);
         let source = SourceVoice::new(spectrum, 44_100.0, 4, 7);
         let mut frame = HydrophoneFrame::new(1);
         processor.render_into(&source, 0.0, 44100.0, &mut frame);
