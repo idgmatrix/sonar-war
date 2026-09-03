@@ -6,7 +6,7 @@
   "required": ["schema_version", "overlays"],
   "properties": {
     "$schema": { "type": "string" },
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "const": "1.1.0" },
     "overlays": {
       "type": "array",
       "minItems": 1,
@@ -14,7 +14,7 @@
         "type": "object",
         "required": [
           "id", "code", "label", "broadband_profile_id", "evidence_ref", "confidence",
-          "measurement", "lines", "observed_modulation", "applicability", "limitations"
+          "measurement", "directionality", "lines", "observed_modulation", "applicability", "limitations"
         ],
         "properties": {
           "id": { "const": "overseas-harriette-140rpm" },
@@ -47,6 +47,32 @@
                 "properties": { "min": { "const": 2 }, "max": { "const": 5 } },
                 "additionalProperties": false
               }
+            },
+            "additionalProperties": false
+          },
+          "directionality": {
+            "type": "object",
+            "required": [
+              "level_reference", "boundary", "equation", "depression_angle_definition",
+              "blade_rate_effective_source_depth_m", "other_tonal_model",
+              "broadband_synthesis_enabled", "observed_high_frequency_broadband_effective_depth_m",
+              "reason"
+            ],
+            "properties": {
+              "level_reference": { "const": "keel_aspect" },
+              "boundary": { "const": "pressure_release_surface" },
+              "equation": { "const": "D(theta,f)=2*sin((2*pi*f/c)*d_eff*sin(theta))" },
+              "depression_angle_definition": { "const": "0 deg horizontal, 90 deg keel" },
+              "blade_rate_effective_source_depth_m": { "const": 1.8 },
+              "other_tonal_model": { "const": "normalized_low_frequency_dipole" },
+              "broadband_synthesis_enabled": { "const": false },
+              "observed_high_frequency_broadband_effective_depth_m": {
+                "type": "object",
+                "required": ["min", "max"],
+                "properties": { "min": { "const": 4.3 }, "max": { "const": 5.5 } },
+                "additionalProperties": false
+              },
+              "reason": { "type": "string", "minLength": 1 }
             },
             "additionalProperties": false
           },

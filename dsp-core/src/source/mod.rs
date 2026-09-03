@@ -19,11 +19,27 @@ pub mod merchant;
 pub const TONAL_HARMONICS: u32 = 15;
 const LEGACY_TONAL_HARMONICS: usize = 5;
 
+/// 협대역 소스 준위가 참조하는 방사 조건.
+///
+/// 자유수면 압력 해제에 의한 쌍극자 응답은 Source가 아니라 Propagation이 이 정보를
+/// 소비해 적용한다. `KeelAspectPressureReleaseDipole`의 유효 수심은 음원의 실제
+/// 기하학적 수심과 별개인 측정 모델 파라미터다.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SourceLevelReference {
+    /// 자유장 1 m 준위. 방향 보정이 필요 없다.
+    FreeField,
+    /// keel 방향 측정 준위이며, 주파수 의존 정확식에 쓸 유효 소스 수심이 알려졌다.
+    KeelAspectPressureReleaseDipole { effective_source_depth_m: f32 },
+    /// keel 방향 측정 준위. `kd << 1`에서 수심이 소거되는 정규화 쌍극자 근사다.
+    KeelAspectLowFrequencyDipole,
+}
+
 /// Source 계층이 내보내는 단일 협대역 선. 전파·수신기 효과는 포함하지 않는다.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SourceLine {
     pub frequency_hz: f32,
     pub level_db_re_1upa_at_1m: f32,
+    pub level_reference: SourceLevelReference,
 }
 
 /// 대역 제한 광대역 성분. 준위는 1 Hz 대역폭당 소스 스펙트럼 준위다.
@@ -259,11 +275,13 @@ pub fn source_spectrum(
                     harmonic,
                     tonal_level_db_re_1upa_at_1m,
                 ),
+                level_reference: SourceLevelReference::FreeField,
             }
         } else {
             SourceLine {
                 frequency_hz: 1.0,
                 level_db_re_1upa_at_1m: f32::NEG_INFINITY,
+                level_reference: SourceLevelReference::FreeField,
             }
         }
     });

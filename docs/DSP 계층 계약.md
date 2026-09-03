@@ -8,7 +8,7 @@
 | 계층 | 입력 | 출력 | 포함 | 금지 |
 |---|---|---|---|---|
 | Source | `source_profile_id`, 운항 상태 또는 기존 RPM·준위 제어 | `SourceSpectrum`, `SourceSample` | 1 m 방사 톤선, 대역별 광대역 PSD, 자체 변조율과 결정적 잡음 히스토리 | 거리 TL, 도플러, 하이드로폰 지연, 수신기 감도 |
-| Propagation | `SourceVoice`, `PropagationGeometry`, 배열 위치, 음속 | `PropagatedSpectrum`, `HydrophoneFrame` | 주파수별 TL, 도플러, 도달 방향, 인과적 배열 지연과 µPa 프레임 혼합 | full-scale 정규화, 빔 조향, 후단 압축 |
+| Propagation | `SourceVoice`, `PropagationGeometry`, 배열 위치, 음속 | `PropagatedSpectrum`, `HydrophoneFrame` | 자유수면 압력 해제 방향 응답, 주파수별 TL, 도플러, 도달 방향, 인과적 배열 지연과 µPa 프레임 혼합 | full-scale 정규화, 빔 조향, 후단 압축 |
 | Receiver | `HydrophoneFrame`, full-scale 기준, 배열/해양 상태 | 조향 빔 샘플 | µPa → 선형 FS 변환, 배열 지연-합, 수신점 주변 소음 | 소스 준위 변경, TL·도플러 재계산 |
 | Analysis | 수신기 배열/빔 샘플 | BASS/LOFAR 텔레메트리 | 감산, 전력·스펙트럼 분석, 표시용 집계 | 시간축 전진, 음원 재합성, 전파·수신 효과 변경 |
 | Output | 주 조향 빔 샘플 | 오디오 샘플 | 출력 제한과 향후 게인·라우팅 | 분석 결과를 이용한 원 신호 변조 |
@@ -19,6 +19,7 @@
 |---|---|
 | `SourceLine::frequency_hz` | Hz, 도플러 적용 전 |
 | `SourceLine::level_db_re_1upa_at_1m` | dB re 1 µPa @ 1 m |
+| `SourceLine::level_reference` | 자유장 또는 keel-aspect 측정 준위와 그 방향 모델 |
 | `SourceBand::center_hz` | Hz, 도플러 적용 전 대역 중심 |
 | `SourceBand::spectrum_level_db_re_1upa2_per_hz_at_1m` | dB re 1 µPa²/Hz @ 1 m |
 | `ReceivedLine::frequency_hz` | Hz, 도플러 적용 후 |
@@ -31,6 +32,14 @@
 `PropagationGeometry`는 소스와 수신기 수심을 각각 받아 수직 오프셋을 계산한다. 현재
 8-float WASM 장면 계약에는 자함 수심이 없으므로 호환 경로에서는 수신기 수심을 0 m로
 둔다. 월드 어댑터를 연결할 때 자함 수심을 명시적으로 전달하도록 계약을 확장한다.
+
+저주파 측정 톤의 `level_reference`가 keel-aspect이면 자유수면 압력 해제 응답은
+Propagation에서만 적용한다. Arveson–Vendittis의 정의처럼 고각 `θ`는 수평 0°, keel
+90°이며, 유효 소스 수심 `d_eff`가 알려진 선은
+`|sin(k d_eff sinθ)| / |sin(k d_eff)|`로 측정 준위를 현재 경로에 정규화한다.
+수심 근거가 없는 저주파 선은 `kd << 1` 극한인 `|sinθ|`만 사용한다. 이 값은 발생원의
+실제 기하학적 수심이 아니며 Source 파형에 미리 곱하지 않는다. 별도 모집단 모델인
+JOMOPANS 광대역에는 단일 선박에서 얻은 이 방향성을 적용하지 않는다.
 
 근거 기반 상선 계약은 표적당 7 float
 `[bearing_deg, range_m, depth_m, profile_code, speed_kn, length_m, rel_vel_ms]`다.
@@ -70,5 +79,6 @@ Source 토널·DEMON 피크 주파수를 골든 테스트로 비교한다.
 상선 합성 PSD는 1 km 골든에서 `±2.5 dB`로 검사하고 50 km에서는 고주파 TL이 저주파보다
 추가로 감소하는 수식을 검증한다. 매우 먼 거리의 고주파 성분은 f32 물리 압력 합산의 수치
 바닥 아래로 내려가므로 고정밀 오프라인 분석과 실시간 청취 경로의 요구를 구분한다.
-다음 단계에서는 톤 레벨과 채널 응답을 문헌 기반 허용 오차와 비교한다. AudioWorklet의
+측정 상선 톤은 keel 방향과 임의 고각에서 자유수면 방향 응답을 자동 검사한다. 다음
+단계에서는 채널 응답을 문헌 기반 허용 오차와 비교한다. AudioWorklet의
 `DspEngine::process()` 블록당 1회 호출 규약은 계속 유지한다.

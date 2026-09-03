@@ -3,7 +3,7 @@
 //! 근거와 기계 판독 원본: `data/acoustics/merchant-profiles.json`.
 //! 모델 유효 범위는 20 Hz–20 kHz이며 개별 선박 고유 서명이 아니다.
 
-use super::{SourceBand, SourceLine, SourceSpectrum, TONAL_HARMONICS};
+use super::{SourceBand, SourceLevelReference, SourceLine, SourceSpectrum, TONAL_HARMONICS};
 
 /// 현재 구현된 개별 상선 톤 유사체. 모집단 JOMOPANS 광대역 모델과 별도 선택한다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +59,15 @@ pub fn apply_tonal_overlay(
                     30.0
                 },
                 level_db_re_1upa_at_1m: OVERSEAS_HARRIETTE_140_LEVELS_DB[index],
+                // Arveson–Vendittis Fig. 9/10: blade-rate 계열은 유효 수심 1.8 m의
+                // 정확식, 나머지 저주파 기계 톤은 수심을 꾸며내지 않는 kd<<1 근사.
+                level_reference: if matches!(index, 0 | 2 | 3 | 4 | 6 | 7 | 8 | 10 | 11 | 12) {
+                    SourceLevelReference::KeelAspectPressureReleaseDipole {
+                        effective_source_depth_m: 1.8,
+                    }
+                } else {
+                    SourceLevelReference::KeelAspectLowFrequencyDipole
+                },
             });
             // 논문은 blade-rate 변조를 관찰했지만 변조 깊이의 일반화 가능한 수치를
             // 제공하지 않는다. 임의의 포락선을 JOMOPANS 모집단 PSD에 곱하지 않는다.
@@ -166,6 +175,7 @@ pub fn source_spectrum(profile: MerchantProfile, speed_kn: f32, length_m: f32) -
         tonal_lines: [SourceLine {
             frequency_hz: 1.0,
             level_db_re_1upa_at_1m: f32::NEG_INFINITY,
+            level_reference: SourceLevelReference::FreeField,
         }; TONAL_HARMONICS as usize],
         broadband_bands,
         // 대역 에너지를 전력 합산한 전체 광대역 RMS 준위.
@@ -237,6 +247,16 @@ mod tests {
         assert_eq!(spectrum.tonal_lines[13].level_db_re_1upa_at_1m, 179.0);
         assert_eq!(spectrum.tonal_lines[14].frequency_hz, 30.0);
         assert_eq!(spectrum.tonal_lines[14].level_db_re_1upa_at_1m, 168.0);
+        assert_eq!(
+            spectrum.tonal_lines[0].level_reference,
+            SourceLevelReference::KeelAspectPressureReleaseDipole {
+                effective_source_depth_m: 1.8
+            }
+        );
+        assert_eq!(
+            spectrum.tonal_lines[1].level_reference,
+            SourceLevelReference::KeelAspectLowFrequencyDipole
+        );
         assert_eq!(spectrum.modulation_rate_hz, 0.0);
     }
 

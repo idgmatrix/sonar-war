@@ -1,5 +1,5 @@
 # Arveson & Vendittis (2000) Table III, M/V OVERSEAS HARRIETTE, 140 RPM, 16 kn, keel aspect.
-# Propagation target: 1 km spherical spreading + project Thorp absorption, no Doppler, colocated-depth direct path.
+# Propagation target: 1 km spherical spreading + project Thorp absorption, no Doppler, vertical keel-aspect direct path.
 frequency_hz,source_level_db_re_1upa_at_1m,transmission_loss_db,received_level_db_re_1upa,frequency_tolerance_hz,level_tolerance_db
 9.333333,174.000,60.002711,113.997289,0.040,0.050
 14.000000,174.000,60.002724,113.997276,0.040,0.050

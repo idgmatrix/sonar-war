@@ -5,7 +5,9 @@
 
 use crate::beamform::beam_delay;
 use crate::physics::transmission_loss_db;
-use crate::source::{SourceLine, SourceSpectrum, SourceVoice, TONAL_HARMONICS};
+use crate::source::{
+    SourceLevelReference, SourceLine, SourceSpectrum, SourceVoice, TONAL_HARMONICS,
+};
 
 /// 캐비테이션 광대역 TL을 평가하는 기준 주파수 (kHz).
 pub const BROADBAND_REFERENCE_KHZ: f32 = 1.0;
@@ -14,6 +16,40 @@ pub const BROADBAND_REFERENCE_KHZ: f32 = 1.0;
 #[inline]
 pub fn doppler_factor(relative_velocity_ms: f32, sound_speed_ms: f32) -> f32 {
     1.0 + relative_velocity_ms / sound_speed_ms
+}
+
+/// keel 방향 측정 준위를 현재 고각으로 옮기는 자유수면 압력 해제 보정(dB).
+///
+/// `depression_sine=0`은 수평, `1`은 keel 방향이다. 정확식은
+/// `|sin(k d sinθ)| / |sin(k d)|`; 저주파 극한에서는 `|sinθ|`가 된다.
+pub fn source_level_reference_adjustment_db(
+    reference: SourceLevelReference,
+    frequency_hz: f32,
+    depression_sine: f32,
+    sound_speed_ms: f32,
+) -> f32 {
+    let depression_sine = depression_sine.clamp(0.0, 1.0);
+    let pressure_ratio = match reference {
+        SourceLevelReference::FreeField => return 0.0,
+        SourceLevelReference::KeelAspectPressureReleaseDipole {
+            effective_source_depth_m,
+        } => {
+            let kd = 2.0 * std::f32::consts::PI * frequency_hz * effective_source_depth_m
+                / sound_speed_ms.max(f32::MIN_POSITIVE);
+            let keel = kd.sin().abs();
+            if keel <= f32::MIN_POSITIVE {
+                depression_sine
+            } else {
+                (kd * depression_sine).sin().abs() / keel
+            }
+        }
+        SourceLevelReference::KeelAspectLowFrequencyDipole => depression_sine,
+    };
+    if pressure_ratio == 0.0 {
+        f32::NEG_INFINITY
+    } else {
+        20.0 * pressure_ratio.log10()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -223,11 +259,19 @@ pub fn propagate(
         let SourceLine {
             frequency_hz,
             level_db_re_1upa_at_1m,
+            level_reference,
         } = source.tonal_lines[index];
         let shifted_frequency_hz = frequency_hz * doppler;
+        let depression_sine = (vertical_offset_m / range_m).abs().clamp(0.0, 1.0);
+        let reference_adjustment_db = source_level_reference_adjustment_db(
+            level_reference,
+            frequency_hz,
+            depression_sine,
+            sound_speed_ms,
+        );
         ReceivedLine {
             frequency_hz: shifted_frequency_hz,
-            level_db_re_1upa: level_db_re_1upa_at_1m
+            level_db_re_1upa: level_db_re_1upa_at_1m + reference_adjustment_db
                 - transmission_loss_db(range_m, shifted_frequency_hz / 1000.0),
         }
     });
@@ -359,6 +403,77 @@ mod tests {
     }
 
     #[test]
+    fn pressure_release_dipole_preserves_keel_reference_and_nulls_horizontal() {
+        let exact = SourceLevelReference::KeelAspectPressureReleaseDipole {
+            effective_source_depth_m: 1.8,
+        };
+        assert_eq!(
+            source_level_reference_adjustment_db(exact, 93.333_336, 1.0, 1500.0),
+            0.0
+        );
+        assert!(source_level_reference_adjustment_db(exact, 93.333_336, 0.0, 1500.0).is_infinite());
+        assert_eq!(
+            source_level_reference_adjustment_db(
+                SourceLevelReference::KeelAspectLowFrequencyDipole,
+                24.0,
+                1.0,
+                1500.0,
+            ),
+            0.0
+        );
+    }
+
+    #[test]
+    fn exact_pressure_release_factor_is_frequency_dependent() {
+        let reference = SourceLevelReference::KeelAspectPressureReleaseDipole {
+            effective_source_depth_m: 1.8,
+        };
+        let low = source_level_reference_adjustment_db(reference, 9.333_333, 0.5, 1500.0);
+        let high = source_level_reference_adjustment_db(reference, 93.333_33, 0.5, 1500.0);
+        let low_frequency_limit_db = 20.0 * 0.5f32.log10();
+        assert!((low - low_frequency_limit_db).abs() < 0.01, "low={low}");
+        assert!(high > low + 0.35, "low={low} high={high}");
+    }
+
+    #[test]
+    fn measured_merchant_directionality_is_applied_only_in_propagation() {
+        let mut source = merchant::source_spectrum(MerchantProfile::Bulker, 16.0, 172.9);
+        assert!(apply_tonal_overlay(
+            &mut source,
+            MerchantTonalOverlay::OverseasHarriette140Rpm,
+            140.0,
+            4,
+        ));
+        let original = source.clone();
+        let propagated = propagate(
+            &source,
+            PropagationGeometry {
+                bearing_deg: 0.0,
+                range_m: 1000.0,
+                source_depth_m: 500.0,
+                receiver_depth_m: 0.0,
+                relative_velocity_ms: 0.0,
+            },
+            &[],
+            1500.0,
+        );
+        assert_eq!(
+            source, original,
+            "Propagation은 Source 기준값을 변경하지 않는다"
+        );
+        let tl = transmission_loss_db(1000.0, source.tonal_lines[0].frequency_hz / 1000.0);
+        let correction = propagated.tonal_lines[0].level_db_re_1upa
+            - (source.tonal_lines[0].level_db_re_1upa_at_1m - tl);
+        let expected = source_level_reference_adjustment_db(
+            source.tonal_lines[0].level_reference,
+            source.tonal_lines[0].frequency_hz,
+            0.5,
+            1500.0,
+        );
+        assert!((correction - expected).abs() < 0.002);
+    }
+
+    #[test]
     fn merchant_bands_receive_frequency_dependent_loss() {
         let source = merchant::source_spectrum(MerchantProfile::Bulker, 13.5, 211.0);
         let propagated = propagate(
@@ -438,7 +553,8 @@ mod tests {
                 bearing_deg: 0.0,
                 range_m: RANGE_M,
                 source_depth_m: 6.0,
-                receiver_depth_m: 6.0,
+                // Table III는 keel-aspect 준위이므로 1 km 수직 경로에서 검증한다.
+                receiver_depth_m: 1006.0,
                 relative_velocity_ms: 0.0,
             },
             &[[0.0, 0.0, 0.0]],

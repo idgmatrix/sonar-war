@@ -250,6 +250,13 @@ describe('상선 측정 톤 오버레이', () => {
     expect(overlay.lines[0]).toMatchObject({ frequency_hz: 9.333333, level_db: 174 });
     expect(overlay.lines[4]).toMatchObject({ frequency_hz: 37.333333, level_db: 185 });
     expect(overlay.lines.at(-2)).toMatchObject({ frequency_hz: 24, level_db: 179 });
+    expect(overlay.directionality).toMatchObject({
+      level_reference: 'keel_aspect',
+      boundary: 'pressure_release_surface',
+      blade_rate_effective_source_depth_m: 1.8,
+      other_tonal_model: 'normalized_low_frequency_dipole',
+      broadband_synthesis_enabled: false,
+    });
     expect(overlay.limitations.join(' ')).toContain('단일 선박');
   });
 
