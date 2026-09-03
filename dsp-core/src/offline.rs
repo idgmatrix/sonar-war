@@ -160,6 +160,36 @@ pub fn power_spectrum(samples: &[f32], sample_rate_hz: f64) -> PowerSpectrum {
     }
 }
 
+/// 단측 PSD를 `[minimum_hz, maximum_hz)`에서 적분한 대역 전력이다.
+///
+/// 반환값은 입력 단위의 제곱이며, 빈 중심이 대역 안에 있는 PSD에 빈 폭을 곱해 합산한다.
+pub fn integrated_band_power(
+    spectrum: &PowerSpectrum,
+    minimum_hz: f64,
+    maximum_hz: f64,
+) -> Option<f64> {
+    if spectrum.psd.is_empty()
+        || spectrum.bin_width_hz <= 0.0
+        || !minimum_hz.is_finite()
+        || !maximum_hz.is_finite()
+        || minimum_hz < 0.0
+        || maximum_hz <= minimum_hz
+    {
+        return None;
+    }
+    let power = spectrum
+        .psd
+        .iter()
+        .enumerate()
+        .filter_map(|(bin, density)| {
+            let frequency_hz = bin as f64 * spectrum.bin_width_hz;
+            (frequency_hz >= minimum_hz && frequency_hz < maximum_hz).then_some(*density)
+        })
+        .sum::<f64>()
+        * spectrum.bin_width_hz;
+    Some(power)
+}
+
 /// 지정 대역에서 가장 강한 PSD 빈을 찾고 로그 PSD의 포물선 보간으로 주파수를 다듬는다.
 pub fn strongest_peak(
     spectrum: &PowerSpectrum,
@@ -377,6 +407,8 @@ mod tests {
 
         assert!((peak.frequency_hz - frequency).abs() < 0.05);
         assert!((integrated_power - 0.5).abs() < 0.001);
+        assert!((integrated_band_power(&spectrum, 70.0, 77.0).unwrap() - 0.5).abs() < 0.001);
+        assert!(integrated_band_power(&spectrum, 77.0, 70.0).is_none());
     }
 
     #[test]

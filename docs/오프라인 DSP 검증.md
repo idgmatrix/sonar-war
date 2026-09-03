@@ -56,5 +56,13 @@ keel 방향 1 km 구면 확산·Thorp 흡수 후 준위를 기록한다. keel �
 `±0.04 Hz`, 원시·전파 후 준위 `±0.05 dB`를 자동 검사한다. JOMOPANS 광대역과
 수신기 잡음은 각각의 기존 골든에서 별도로 검증한다.
 
-다음 확장은 대역 적분 에너지와 채널 임펄스 응답을 문헌 기반 소스 프로파일별 골든
-기준과 비교하는 것이다.
+`jomopans_bulker_1km.csv`는 대표 다섯 중심 주파수의 PSD뿐 아니라 정확한 base-10
+decidecade 폭 `fc·(10^0.05−10^-0.05)`과 대역 준위를 기록한다. Hann 단측 PSD를 해당
+경계에서 적분한 실제 합성 에너지가 목표의 `±2.5 dB` 안인지 검사한다. 이 검증으로 중심
+준위만 맞고 전체 에너지는 부족했던 8차 Source 필터를 4차로 교정했다.
+
+`direct_path_channel.csv`는 대역별 최소 채널 `h_f(t)=g(f)δ(t−R/c)`의 도달 시간,
+TL, 음압 이득과 에너지 이득을 1 km·10 km에서 독립 검증한다. [BELLHOP 매뉴얼의
+arrival/impulse-response 표현](https://oalib-acoustics.org/website_resources/Rays/HLS-2010-1.pdf)처럼
+후속 표면·해저·굴절 경로는 동일한 도달 목록으로 확장하되, 현재 골든은 그 값을 실측
+다중경로로 오해하지 않도록 직접 경로 하나만 포함한다.

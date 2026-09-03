@@ -80,8 +80,8 @@ pub struct SourceVoice {
     rng: u64,
 }
 
-/// 8차 1/3옥타브 band-pass. Source 내부에서만 상태를 소유한다.
-/// 상선의 강한 저주파 성분이 고주파 대역을 덮지 않도록 동일 biquad를 4단 직렬화한다.
+/// 4차 decidecade band-pass. Source 내부에서만 상태를 소유한다.
+/// 동일 biquad 두 단은 중심 PSD뿐 아니라 목표 decidecade 적분 에너지도 보존한다.
 #[derive(Debug, Clone)]
 struct SourceNoiseBand {
     b0: f32,
@@ -92,10 +92,6 @@ struct SourceNoiseBand {
     z2: f32,
     z3: f32,
     z4: f32,
-    z5: f32,
-    z6: f32,
-    z7: f32,
-    z8: f32,
     amplitude_upa: f32,
     rng: u64,
     latest_pressure_upa: f32,
@@ -119,10 +115,6 @@ impl SourceNoiseBand {
             z2: 0.0,
             z3: 0.0,
             z4: 0.0,
-            z5: 0.0,
-            z6: 0.0,
-            z7: 0.0,
-            z8: 0.0,
             amplitude_upa,
             rng: seed,
             latest_pressure_upa: 0.0,
@@ -144,14 +136,8 @@ impl SourceNoiseBand {
         let second = self.b0 * first + self.z3;
         self.z3 = -self.a1 * second + self.z4;
         self.z4 = self.b2 * first - self.a2 * second;
-        let third = self.b0 * second + self.z5;
-        self.z5 = -self.a1 * third + self.z6;
-        self.z6 = self.b2 * second - self.a2 * third;
-        let fourth = self.b0 * third + self.z7;
-        self.z7 = -self.a1 * fourth + self.z8;
-        self.z8 = self.b2 * third - self.a2 * fourth;
-        self.latest_pressure_upa = fourth;
-        fourth
+        self.latest_pressure_upa = second;
+        second
     }
 }
 

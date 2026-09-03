@@ -12,6 +12,37 @@ use crate::source::{
 /// 캐비테이션 광대역 TL을 평가하는 기준 주파수 (kHz).
 pub const BROADBAND_REFERENCE_KHZ: f32 = 1.0;
 
+/// 단일 주파수 대역에서의 최소 직접 경로 채널 도달.
+///
+/// `h_f(t) = pressure_gain * delta(t - delay_s)`의 실수 포락선 표현이다. 위상,
+/// 표면·해저 반사, 굴절 다중경로는 포함하지 않는다.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DirectPathArrival {
+    pub frequency_hz: f32,
+    pub delay_s: f32,
+    pub transmission_loss_db: f32,
+    pub pressure_gain: f32,
+    pub energy_gain: f32,
+}
+
+/// 현재 구면 확산·Thorp 기준선과 동일한 최소 직접 경로 채널을 만든다.
+pub fn direct_path_arrival(
+    range_m: f32,
+    frequency_hz: f32,
+    sound_speed_ms: f32,
+) -> DirectPathArrival {
+    let range_m = range_m.max(1.0);
+    let transmission_loss_db = transmission_loss_db(range_m, frequency_hz / 1000.0);
+    let pressure_gain = 10f32.powf(-transmission_loss_db / 20.0);
+    DirectPathArrival {
+        frequency_hz,
+        delay_s: range_m / sound_speed_ms.max(f32::MIN_POSITIVE),
+        transmission_loss_db,
+        pressure_gain,
+        energy_gain: pressure_gain * pressure_gain,
+    }
+}
+
 /// 상대 속도에 따른 도플러 주파수 계수. 수신기 방향 접근이 양수다.
 #[inline]
 pub fn doppler_factor(relative_velocity_ms: f32, sound_speed_ms: f32) -> f32 {
@@ -262,6 +293,7 @@ pub fn propagate(
             level_reference,
         } = source.tonal_lines[index];
         let shifted_frequency_hz = frequency_hz * doppler;
+        let channel = direct_path_arrival(range_m, shifted_frequency_hz, sound_speed_ms);
         let depression_sine = (vertical_offset_m / range_m).abs().clamp(0.0, 1.0);
         let reference_adjustment_db = source_level_reference_adjustment_db(
             level_reference,
@@ -272,21 +304,25 @@ pub fn propagate(
         ReceivedLine {
             frequency_hz: shifted_frequency_hz,
             level_db_re_1upa: level_db_re_1upa_at_1m + reference_adjustment_db
-                - transmission_loss_db(range_m, shifted_frequency_hz / 1000.0),
+                - channel.transmission_loss_db,
         }
     });
     let broadband_bands = source
         .broadband_bands
         .iter()
-        .map(|band| ReceivedBand {
-            center_hz: band.center_hz,
-            spectrum_level_db_re_1upa2_per_hz: band.spectrum_level_db_re_1upa2_per_hz_at_1m
-                - transmission_loss_db(range_m, band.center_hz / 1000.0),
+        .map(|band| {
+            let channel = direct_path_arrival(range_m, band.center_hz, sound_speed_ms);
+            ReceivedBand {
+                center_hz: band.center_hz,
+                spectrum_level_db_re_1upa2_per_hz: band.spectrum_level_db_re_1upa2_per_hz_at_1m
+                    - channel.transmission_loss_db,
+            }
         })
         .collect::<Vec<_>>();
     let broadband_level_db_re_1upa = if broadband_bands.is_empty() {
         source.broadband_level_db_re_1upa_at_1m
-            - transmission_loss_db(range_m, BROADBAND_REFERENCE_KHZ)
+            - direct_path_arrival(range_m, BROADBAND_REFERENCE_KHZ * 1000.0, sound_speed_ms)
+                .transmission_loss_db
     } else {
         let pressure_power_upa2: f32 = broadband_bands
             .iter()
@@ -310,7 +346,9 @@ pub fn propagate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::offline::{power_spectrum, strongest_peak, tone_rms_level_db};
+    use crate::offline::{
+        integrated_band_power, power_spectrum, strongest_peak, tone_rms_level_db,
+    };
     use crate::source::merchant::{
         self, apply_tonal_overlay, MerchantProfile, MerchantTonalOverlay,
     };
@@ -400,6 +438,33 @@ mod tests {
     fn doppler_sign_matches_approach_convention() {
         assert!(doppler_factor(10.0, 1500.0) > 1.0);
         assert!(doppler_factor(-10.0, 1500.0) < 1.0);
+    }
+
+    #[test]
+    fn minimum_direct_path_channel_matches_golden_arrivals() {
+        let rows = include_str!("../../data/acoustics/golden/direct_path_channel.csv")
+            .lines()
+            .filter(|line| {
+                !line.is_empty() && !line.starts_with('#') && !line.starts_with("range_m")
+            });
+        let mut row_count = 0;
+        for row in rows {
+            row_count += 1;
+            let fields = row
+                .split(',')
+                .map(|field| field.parse::<f32>().expect("직접 경로 채널 골든 숫자"))
+                .collect::<Vec<_>>();
+            assert_eq!(fields.len(), 8);
+            let arrival = direct_path_arrival(fields[0], fields[1], 1500.0);
+            assert!((arrival.delay_s - fields[2]).abs() <= fields[6]);
+            assert!((arrival.transmission_loss_db - fields[3]).abs() <= fields[7]);
+            let pressure_level_error_db = 20.0 * (arrival.pressure_gain / fields[4]).log10().abs();
+            let energy_level_error_db = 10.0 * (arrival.energy_gain / fields[5]).log10().abs();
+            assert!(pressure_level_error_db <= fields[7]);
+            assert!(energy_level_error_db <= fields[7]);
+            assert!((arrival.energy_gain - arrival.pressure_gain.powi(2)).abs() <= f32::EPSILON);
+        }
+        assert_eq!(row_count, 6);
     }
 
     #[test]
@@ -660,7 +725,7 @@ mod tests {
                     .split(',')
                     .map(|value| value.parse::<f32>().expect("상선 전파 골든 숫자"))
                     .collect::<Vec<_>>();
-                assert_eq!(values.len(), 4);
+                assert_eq!(values.len(), 7);
                 let source_band = source_spectrum
                     .broadband_bands
                     .iter()
@@ -680,7 +745,22 @@ mod tests {
                 assert!(
                     (received_band.spectrum_level_db_re_1upa2_per_hz - values[3]).abs() < 0.002
                 );
-                (values[0], values[3])
+                let bandwidth_hz = values[0] * (10f32.powf(0.05) - 10f32.powf(-0.05));
+                assert!((bandwidth_hz - values[4]).abs() < 0.002);
+                assert!(
+                    (source_band.spectrum_level_db_re_1upa2_per_hz_at_1m
+                        + 10.0 * bandwidth_hz.log10()
+                        - values[5])
+                        .abs()
+                        < 0.002
+                );
+                assert!(
+                    (received_band.spectrum_level_db_re_1upa2_per_hz + 10.0 * bandwidth_hz.log10()
+                        - values[6])
+                        .abs()
+                        < 0.002
+                );
+                (values[0], values[3], values[6])
             })
             .collect::<Vec<_>>();
         let mut source = SourceVoice::new(source_spectrum, sample_rate, 4, 7);
@@ -698,12 +778,26 @@ mod tests {
             next_sample();
         }
         let samples = (0..262_144).map(|_| next_sample()).collect::<Vec<_>>();
-        for (frequency, expected) in golden {
+        let measured_spectrum = power_spectrum(&samples, sample_rate as f64);
+        for (frequency, expected_psd, expected_band_level) in golden {
             let measured = measured_psd_db(&samples, sample_rate, frequency);
             assert!(
-                (measured - expected).abs() <= 2.5,
-                "{frequency} Hz: measured={measured:.2} expected={expected:.2} error={:.2} dB",
-                measured - expected
+                (measured - expected_psd).abs() <= 2.5,
+                "{frequency} Hz: measured={measured:.2} expected={expected_psd:.2} error={:.2} dB",
+                measured - expected_psd
+            );
+            let half_ratio = 10f64.powf(0.05);
+            let band_power = integrated_band_power(
+                &measured_spectrum,
+                frequency as f64 / half_ratio,
+                frequency as f64 * half_ratio,
+            )
+            .expect("decidecade 대역 전력");
+            let measured_band_level = 10.0 * band_power.max(f64::MIN_POSITIVE).log10();
+            assert!(
+                (measured_band_level - expected_band_level as f64).abs() <= 2.5,
+                "{frequency} Hz band: measured={measured_band_level:.2} expected={expected_band_level:.2} error={:.2} dB",
+                measured_band_level - expected_band_level as f64
             );
         }
     }
