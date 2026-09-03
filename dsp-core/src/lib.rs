@@ -6,15 +6,17 @@
 //!   → 하이드로폰별 지연 (τᵢ = pᵢ·û/c, 명세서 §3.2)
 //!   → 지연-합 빔포밍 (메인 빔)
 //!   → + 해양 배경잡음 (Coates/Wenz 네 성분 기준선)
-//!   → 소프트 클립 (tanh — 수신기 동역학 압축)
+//!   → BASS 분석(읽기 전용 분기) / 소프트 클립 출력(tanh)
 //! ```
 //!
 //! 준위 규약: 1 Pa = 1,000,000 µPa = 1.0 full scale (120 dB re 1µPa).
 //! 좌표계: x=전방, y=하향(수심), z=우현.
 //! 준위 모델: `docs/물리 상수 시트.md`.
 
+pub mod analysis;
 pub mod beamform;
 pub mod noise;
+pub mod output;
 pub mod physics;
 pub mod propagation;
 pub mod receiver;
@@ -22,6 +24,7 @@ pub mod source;
 
 use wasm_bindgen::prelude::*;
 
+use analysis::BassAnalyzer;
 use beamform::DEFAULT_SOUND_SPEED;
 use propagation::{propagate, HydrophoneFrame, PropagationGeometry, PropagationProcessor};
 use receiver::{ReceiverArray, DEFAULT_FULL_SCALE_DB_RE_1UPA};
@@ -31,11 +34,6 @@ use source::{source_spectrum, SourceVoice};
 const HYDROPHONE_COUNT: usize = 16;
 /// 구형 어레이 반지름 (m) — 보우 어레이 DIA 8.4m.
 const ARRAY_RADIUS_M: f32 = 4.2;
-/// BASS 전 방위 스캔 해상도 (5° 간격).
-const BASS_BINS: usize = 72;
-/// 매 샘플이 아니라 16샘플마다 스캔해 AudioWorklet 예산을 지킨다.
-const BASS_DECIMATION: u64 = 16;
-
 /// 표적 1개당 float 수: [bearing_deg, range_m, depth_m, rpm, blades, tonal_db, cavitation, rel_vel_ms]
 const TARGET_STRIDE: usize = 8;
 
@@ -140,9 +138,7 @@ pub struct DspEngine {
     targets: Vec<Target>,
     hydrophone_frame: HydrophoneFrame,
     max_delay_samples: usize,
-    bass_power: Vec<f32>,
-    bass_samples: u32,
-    sample_index: u64,
+    bass: BassAnalyzer,
 }
 
 #[wasm_bindgen]
@@ -168,9 +164,7 @@ impl DspEngine {
             targets: Vec::new(),
             hydrophone_frame: HydrophoneFrame::new(HYDROPHONE_COUNT),
             max_delay_samples,
-            bass_power: vec![0.0f32; BASS_BINS],
-            bass_samples: 0,
-            sample_index: 0,
+            bass: BassAnalyzer::new(),
         };
         engine.set_targets(&demo_scene());
         engine
@@ -213,13 +207,7 @@ impl DspEngine {
     /// `out`의 길이가 방위 빈 수가 되며 0°(전방)부터 시계방향으로 균등 배치된다.
     /// 읽은 뒤 누산기를 비워 다음 UI 프레임과 시간 구간이 겹치지 않게 한다.
     pub fn bass_scan(&mut self, out: &mut [f32]) {
-        let count = self.bass_samples.max(1) as f32;
-        for (i, value) in out.iter_mut().enumerate() {
-            let power = self.bass_power.get(i).copied().unwrap_or(0.0) / count;
-            *value = (10.0 * power.max(1e-12).log10()).clamp(-120.0, 0.0);
-        }
-        self.bass_power.fill(0.0);
-        self.bass_samples = 0;
+        self.bass.read_levels(out);
     }
 
     /// 샘플 블럭 1개 합성 (모노 — 채널 복사는 호스트).
@@ -243,19 +231,11 @@ impl DspEngine {
             }
 
             let x = self.receiver.process_frame(&self.hydrophone_frame, travel);
-            if self.sample_index.is_multiple_of(BASS_DECIMATION) {
-                for bin in 0..BASS_BINS {
-                    let az = 2.0 * std::f32::consts::PI * bin as f32 / BASS_BINS as f32;
-                    // 파원 방위의 반대가 파동 진행 방향이다.
-                    let scan_travel = [-az.cos(), 0.0, -az.sin()];
-                    let sample = self.receiver.beam_sample(scan_travel);
-                    self.bass_power[bin] += sample * sample;
-                }
-                self.bass_samples += 1;
-            }
-            *o = x.tanh();
+            let receiver = &self.receiver;
+            self.bass
+                .observe(|direction| receiver.beam_sample(direction));
+            *o = output::soft_limit(x);
             self.t += dt;
-            self.sample_index += 1;
         }
     }
 }
@@ -272,6 +252,7 @@ fn demo_scene() -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::BASS_BINS;
 
     fn engine_with_targets(data: &[f32]) -> DspEngine {
         let mut e = DspEngine::new(44100.0);

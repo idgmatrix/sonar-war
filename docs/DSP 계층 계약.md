@@ -10,7 +10,8 @@
 | Source | RPM, 블레이드 수, 1 m 토널 준위, 캐비테이션 상태 | `SourceSpectrum`, `SourceSample` | 1 m 방사 톤선, 광대역 준위, 자체 변조율과 결정적 잡음 히스토리 | 거리 TL, 도플러, 하이드로폰 지연, 수신기 감도 |
 | Propagation | `SourceVoice`, `PropagationGeometry`, 배열 위치, 음속 | `PropagatedSpectrum`, `HydrophoneFrame` | 주파수별 TL, 도플러, 도달 방향, 인과적 배열 지연과 µPa 프레임 혼합 | full-scale 정규화, 빔 조향, 후단 압축 |
 | Receiver | `HydrophoneFrame`, full-scale 기준, 배열/해양 상태 | 조향 빔 샘플 | µPa → 선형 FS 변환, 배열 지연-합, 수신점 주변 소음 | 소스 준위 변경, TL·도플러 재계산 |
-| Analysis/Output | 수신기 빔 샘플 | BASS/LOFAR 텔레메트리, 오디오 | 표시 분석, 출력 제한 | 음원 재합성, 전파·수신 효과 변경 |
+| Analysis | 수신기 배열/빔 샘플 | BASS/LOFAR 텔레메트리 | 감산, 전력·스펙트럼 분석, 표시용 집계 | 시간축 전진, 음원 재합성, 전파·수신 효과 변경 |
+| Output | 주 조향 빔 샘플 | 오디오 샘플 | 출력 제한과 향후 게인·라우팅 | 분석 결과를 이용한 원 신호 변조 |
 
 ## 2. 단위 계약
 
@@ -47,6 +48,10 @@
 3. `ReceiverArray`가 µPa를 full-scale로 교정하고 주변 소음과 배열 응답을 적용한다.
 4. `DspEngine`은 위 객체를 순서대로 호출하며 샘플 루프에서 버퍼를 할당하지 않는다.
 
-다음 경계는 BASS 누산과 향후 LOFAR/DEMON 분석을 `Analysis`로 옮겨 수신기 출력을 읽기만
-하게 만드는 것이다. 동시에 결정적 블록 덤프를 추가해 각 경계의 수치를 오프라인에서
-검증한다. AudioWorklet의 `DspEngine::process()` 블록당 1회 호출 규약은 계속 유지한다.
+`BassAnalyzer`는 배열의 최신 링 버퍼를 시간축 전진 없이 방위별로 읽고, 감산 주기·전력
+누산·dBFS 변환·윈도우 초기화를 소유한다. `output::soft_limit`는 주 조향 빔에만 적용되므로
+분석 입력을 변조하지 않는다. `DspEngine`은 두 경로의 실행 순서와 WASM 계약만 조율한다.
+
+다음 단계에서는 동일한 계층 출력을 파일로 보존하는 결정적 블록/WAV 덤프를 추가해 톤,
+변조율, 대역 에너지와 채널 응답을 오프라인에서 검증한다. AudioWorklet의
+`DspEngine::process()` 블록당 1회 호출 규약은 계속 유지한다.
