@@ -69,8 +69,8 @@
       "kind": "peer_reviewed",
       "url": "https://doi.org/10.1121/1.428344",
       "doi": "10.1121/1.428344",
-      "accessed_on": "2026-09-03",
-      "notes": "173 m 벌크 화물선 한 척의 광범위 측정. 저주파 방사가 대체로 쌍극자형이며 16 kn에서 9 Hz 블레이드율 174 dB를 보고하지만 선종 전체 방향성 계수로 일반화하지 않는다."
+      "accessed_on": "2026-09-04",
+      "notes": "172.9 m 벌크 화물선 한 척의 광범위 측정. 140 RPM·16 kn에서 블레이드율/엔진 점화율/발전기 톤의 keel-aspect 준위와 2–5 dB 변동성을 보고한다. 선종 전체나 다른 운항점으로 일반화하지 않는다."
     },
     {
       "id": "boem-sound-source-list-2023",
@@ -111,6 +111,15 @@
               "confidence": "B",
               "uncertainty": "선종·추진계·속력별 편차가 크며 개별 선박 식별값으로 사용 불가",
               "evidence_refs": ["boem-sound-source-list-2023", "mckenna-2012"]
+            },
+            {
+              "id": "overseas_harriette_140rpm_tonal_lines",
+              "value": { "min": 9.333333, "max": 93.333333 },
+              "unit": "Hz",
+              "reference_conditions": "172.9 m 벌크선, 4엽 프로펠러, 직결 2행정 6기통 디젤, 140 RPM·16 kn, keel aspect; 24/30 Hz 고정 발전기 선은 별도 포함",
+              "confidence": "B",
+              "uncertainty": "단일 선박·단일 운항점. 체계 오차 <2 dB, 소스 변동 표준편차 2–5 dB. 다른 RPM 또는 상선 모집단으로 레벨 외삽 금지",
+              "evidence_refs": ["arveson-vendittis-2000"]
             }
           ]
         },

@@ -12,8 +12,12 @@ use std::f32::consts::PI;
 
 pub mod merchant;
 
-/// 합성하는 토널 고조파 수.
-pub const TONAL_HARMONICS: u32 = 5;
+/// 한 Source 프레임이 담을 수 있는 최대 협대역 선 수.
+///
+/// 15개는 Arveson–Vendittis의 140 RPM 벌크선 측정점(추진 13개 + 발전기 2개)을
+/// 손실 없이 담기 위한 값이다. 기존 일반 Source는 앞의 5개만 사용한다.
+pub const TONAL_HARMONICS: u32 = 15;
+const LEGACY_TONAL_HARMONICS: usize = 5;
 
 /// Source 계층이 내보내는 단일 협대역 선. 전파·수신기 효과는 포함하지 않는다.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -143,7 +147,9 @@ impl SourceVoice {
         seed: u64,
     ) -> Self {
         let tonal_amplitude_1m_upa = std::array::from_fn(|index| {
-            10f32.powf(spectrum.tonal_lines[index].level_db_re_1upa_at_1m / 20.0)
+            // SourceLine 준위는 RMS다. 정현파의 피크 진폭은 RMS×√2여야 한다.
+            std::f32::consts::SQRT_2
+                * 10f32.powf(spectrum.tonal_lines[index].level_db_re_1upa_at_1m / 20.0)
         });
         let broadband_amplitude_1m_upa =
             10f32.powf(spectrum.broadband_level_db_re_1upa_at_1m / 20.0);
@@ -245,10 +251,20 @@ pub fn source_spectrum(
 ) -> SourceSpectrum {
     let blade_rate = blade_rate_hz(rpm, blade_count).max(0.1);
     let tonal_lines = std::array::from_fn(|index| {
-        let harmonic = index as u32 + 1;
-        SourceLine {
-            frequency_hz: blade_rate * harmonic as f32,
-            level_db_re_1upa_at_1m: tonal_harmonic_level_db(harmonic, tonal_level_db_re_1upa_at_1m),
+        if index < LEGACY_TONAL_HARMONICS {
+            let harmonic = index as u32 + 1;
+            SourceLine {
+                frequency_hz: blade_rate * harmonic as f32,
+                level_db_re_1upa_at_1m: tonal_harmonic_level_db(
+                    harmonic,
+                    tonal_level_db_re_1upa_at_1m,
+                ),
+            }
+        } else {
+            SourceLine {
+                frequency_hz: 1.0,
+                level_db_re_1upa_at_1m: f32::NEG_INFINITY,
+            }
         }
     });
     SourceSpectrum {
@@ -352,6 +368,26 @@ mod tests {
             second.advance();
         }
         let sample = first.sample_at(0.0, 0.0);
-        assert!((sample.tonal_pressure_1m_upa[0] - 1_000_000.0).abs() < 1.0);
+        assert!(
+            (sample.tonal_pressure_1m_upa[0] - std::f32::consts::SQRT_2 * 1_000_000.0).abs() < 2.0
+        );
+    }
+
+    #[test]
+    fn tonal_level_is_interpreted_as_rms_not_peak() {
+        let mut spectrum = source_spectrum(60.0, 1, 120.0, 0.0);
+        spectrum.broadband_level_db_re_1upa_at_1m = f32::NEG_INFINITY;
+        let voice = SourceVoice::new(spectrum, 48_000.0, 2, 1);
+        let samples = (0..48_000)
+            .map(|index| {
+                voice
+                    .sample_at(index as f64 / 48_000.0, 0.0)
+                    .tonal_pressure_1m_upa[0]
+            })
+            .collect::<Vec<_>>();
+        let rms = (samples.iter().map(|sample| sample * sample).sum::<f32>()
+            / samples.len() as f32)
+            .sqrt();
+        assert!((20.0 * rms.log10() - 120.0).abs() < 0.01);
     }
 }

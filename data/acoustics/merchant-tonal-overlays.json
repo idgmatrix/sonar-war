@@ -1,0 +1,56 @@
+{
+  "$schema": "./schema/merchant-tonal-overlays.schema.json",
+  "schema_version": "1.0.0",
+  "overlays": [
+    {
+      "id": "overseas-harriette-140rpm",
+      "code": 1,
+      "label": "M/V OVERSEAS HARRIETTE 140 RPM 측정 톤 유사체",
+      "broadband_profile_id": "merchant-bulker-jomopans-echo",
+      "evidence_ref": "arveson-vendittis-2000",
+      "confidence": "B",
+      "measurement": {
+        "vessel_count": 1,
+        "vessel_length_m": 172.9,
+        "vessel_displacement_t": 25515,
+        "engine": "direct-drive two-stroke 6-cylinder diesel",
+        "propeller_blades": 4,
+        "shaft_rpm": 140,
+        "speed_kn": 16,
+        "aspect": "keel",
+        "level_unit": "dB re 1 µPa @ 1 m",
+        "systematic_uncertainty_db_max": 2,
+        "source_variability_std_db": { "min": 2, "max": 5 }
+      },
+      "lines": [
+        { "source": "blade_rate", "order": 1, "shaft_order": 4, "frequency_hz": 9.333333, "level_db": 174 },
+        { "source": "engine_firing_rate", "order": 1, "shaft_order": 6, "frequency_hz": 14, "level_db": 174 },
+        { "source": "blade_rate", "order": 2, "shaft_order": 8, "frequency_hz": 18.666667, "level_db": 175 },
+        { "source": "blade_and_firing_overlap", "order": 3, "shaft_order": 12, "frequency_hz": 28, "level_db": 179 },
+        { "source": "blade_rate", "order": 4, "shaft_order": 16, "frequency_hz": 37.333333, "level_db": 185 },
+        { "source": "engine_firing_rate", "order": 3, "shaft_order": 18, "frequency_hz": 42, "level_db": 176 },
+        { "source": "blade_rate", "order": 5, "shaft_order": 20, "frequency_hz": 46.666667, "level_db": 175 },
+        { "source": "blade_and_firing_overlap", "order": 6, "shaft_order": 24, "frequency_hz": 56, "level_db": 175 },
+        { "source": "blade_rate", "order": 7, "shaft_order": 28, "frequency_hz": 65.333333, "level_db": 172 },
+        { "source": "engine_firing_rate", "order": 5, "shaft_order": 30, "frequency_hz": 70, "level_db": 163 },
+        { "source": "blade_rate", "order": 8, "shaft_order": 32, "frequency_hz": 74.666667, "level_db": 172 },
+        { "source": "blade_and_firing_overlap", "order": 9, "shaft_order": 36, "frequency_hz": 84, "level_db": 173 },
+        { "source": "blade_rate", "order": 10, "shaft_order": 40, "frequency_hz": 93.333333, "level_db": 170 },
+        { "source": "service_generator", "order": 4, "frequency_hz": 24, "level_db": 179 },
+        { "source": "service_generator", "order": 5, "frequency_hz": 30, "level_db": 168 }
+      ],
+      "observed_modulation": {
+        "rate_hz": 9.333333,
+        "synthesis_enabled": false,
+        "reason": "원 논문은 blade-rate 변조를 관찰했지만 재현 가능한 변조 깊이·포락선 계수를 제시하지 않는다."
+      },
+      "applicability": "shaft_rpm=140±0.5 and propeller_blades=4 only",
+      "limitations": [
+        "단일 선박·단일 운항점의 keel-aspect 측정이므로 상선 모집단이나 다른 RPM으로 레벨을 일반화하지 않는다.",
+        "저주파 쌍극자 방향성과 주파수별 유효 소스 수심은 아직 합성하지 않으므로 장거리 절대 수신 준위에는 추가 불확실성이 있다.",
+        "JOMOPANS 모집단 광대역과 결합한 합성 장면은 두 문헌 모델의 명시적 유사체이며 동일 선박의 완전한 실측 스펙트럼이 아니다.",
+        "blade-rate 변조는 관찰됐지만 변조 깊이가 보고되지 않아 임의 포락선을 합성하지 않는다."
+      ]
+    }
+  ]
+}

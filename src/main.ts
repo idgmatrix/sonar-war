@@ -15,7 +15,10 @@ import { createDemoWorld, World } from './core/sim/world.ts';
 import workletUrl from './dsp/worklets/sonarWorklet.ts?worker&url';
 import { BassDisplay, LofarDisplay } from './render/displays/sonarDisplays.ts';
 import wasmUrl from '../dsp-core/pkg/dsp_core_bg.wasm?url';
-import { encodeProfiledTargets, type ProfiledTarget } from './dsp/sourceProfiles.ts';
+import {
+  encodeProfiledTargetsV2,
+  type ProfiledTargetV2,
+} from './dsp/sourceProfiles.ts';
 
 const tickEl = document.getElementById('tick')!;
 const timeEl = document.getElementById('time')!;
@@ -55,7 +58,7 @@ const loop = new TickLoop(
 // --- 씬 프리셋 (표적당 8 float: bearing, range, depth, rpm, blades, tonal_db, cavitation, rel_vel) ---
 type Scene =
   | { label: string; kind: 'legacy'; data: number[] }
-  | { label: string; kind: 'profiled'; targets: ProfiledTarget[] };
+  | { label: string; kind: 'profiledV2'; targets: ProfiledTargetV2[] };
 
 const SCENES: Record<string, Scene> = {
   demo: {
@@ -88,17 +91,20 @@ const SCENES: Record<string, Scene> = {
     data: [0, 1500, 40, 60, 6, 152, 0.5, 0],
   },
   merchant: {
-    label: 'MERCHANT · JOMOPANS bulker',
-    kind: 'profiled',
+    label: 'MERCHANT · measured 140 RPM analog',
+    kind: 'profiledV2',
     targets: [
       {
         bearingDeg: 45,
-        rangeM: 3000,
+        rangeM: 10000,
         depthM: 6,
         sourceProfileId: 'merchant-bulker-jomopans-echo',
-        speedKn: 13.5,
-        lengthM: 211,
-        relativeVelocityMs: 2,
+        speedKn: 16,
+        lengthM: 172.9,
+        relativeVelocityMs: 0,
+        tonalOverlayId: 'overseas-harriette-140rpm',
+        shaftRpm: 140,
+        bladeCount: 4,
       },
     ],
   },
@@ -135,7 +141,7 @@ function sendScene(key: string): void {
   const message =
     scene.kind === 'legacy'
       ? { type: 'scene', targets: new Float32Array(scene.data) }
-      : { type: 'profiledScene', targets: encodeProfiledTargets(scene.targets) };
+      : { type: 'profiledSceneV2', targets: encodeProfiledTargetsV2(scene.targets) };
   node.port.postMessage(message);
   sceneEl.textContent = scene.label;
   setTimeout(() => {

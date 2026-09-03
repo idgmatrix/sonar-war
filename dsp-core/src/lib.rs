@@ -30,7 +30,7 @@ use analysis::BassAnalyzer;
 use beamform::DEFAULT_SOUND_SPEED;
 use propagation::{propagate, HydrophoneFrame, PropagationGeometry, PropagationProcessor};
 use receiver::{ReceiverArray, DEFAULT_FULL_SCALE_DB_RE_1UPA};
-use source::merchant::{self, MerchantProfile};
+use source::merchant::{self, MerchantProfile, MerchantTonalOverlay};
 use source::{source_spectrum, SourceVoice};
 
 /// 가상 구형 어레이 하이드로폰 수.
@@ -41,6 +41,8 @@ const ARRAY_RADIUS_M: f32 = 4.2;
 const TARGET_STRIDE: usize = 8;
 /// 근거 프로파일 표적: [bearing, range, depth, profile_code, speed_kn, length_m, rel_vel_ms].
 const PROFILED_TARGET_STRIDE: usize = 7;
+/// v2 근거 프로파일 표적: v1 7개 + [tonal_overlay_code, shaft_rpm, blade_count].
+const PROFILED_TARGET_V2_STRIDE: usize = 10;
 
 /// JS/WASM flat array를 계층 입력으로 넘기기 전에 단위가 있는 필드로 해석한 값.
 #[derive(Debug, Clone, Copy)]
@@ -178,6 +180,45 @@ impl Target {
             propagation,
         })
     }
+
+    fn new_merchant_v2(
+        values: &[f32],
+        sample_rate: f32,
+        hydrophones: &[[f32; 3]],
+        max_delay_samples: usize,
+    ) -> Option<Self> {
+        if values.len() < PROFILED_TARGET_V2_STRIDE {
+            return None;
+        }
+        let profile = MerchantProfile::from_code(values[3] as u32)?;
+        let mut source = merchant::source_spectrum(profile, values[4], values[5]);
+        let overlay = MerchantTonalOverlay::from_code(values[7] as u32)?;
+        if !merchant::apply_tonal_overlay(&mut source, overlay, values[8], values[9] as u32) {
+            return None;
+        }
+        let propagated = propagate(
+            &source,
+            PropagationGeometry {
+                bearing_deg: values[0],
+                range_m: values[1],
+                source_depth_m: values[2],
+                receiver_depth_m: 0.0,
+                relative_velocity_ms: values[6],
+            },
+            hydrophones,
+            DEFAULT_SOUND_SPEED,
+        );
+        let history_samples = max_delay_samples * 2 + 2;
+        let propagation =
+            PropagationProcessor::new(&source, &propagated, sample_rate, history_samples);
+        let seed = 0x8EBC_6AF0_9C88_C6E3
+            ^ (profile as u64).wrapping_mul(0x5899_65CC_7537_4CC3)
+            ^ (overlay as u64).wrapping_mul(0x1D8E_4E27_C47D_124F);
+        Some(Self {
+            source: SourceVoice::new(source, sample_rate, history_samples, seed),
+            propagation,
+        })
+    }
 }
 
 /// SSN-X DSP 엔진 (WASM).
@@ -245,6 +286,21 @@ impl DspEngine {
         self.targets.clear();
         for chunk in data.chunks(PROFILED_TARGET_STRIDE) {
             if let Some(target) = Target::new_merchant(
+                chunk,
+                self.sample_rate,
+                &self.hydrophones,
+                self.max_delay_samples,
+            ) {
+                self.targets.push(target);
+            }
+        }
+    }
+
+    /// 측정 톤 오버레이를 포함한 v2 상선 씬. 기존 stride 7 계약은 그대로 유지한다.
+    pub fn set_profiled_targets_v2(&mut self, data: &[f32]) {
+        self.targets.clear();
+        for chunk in data.chunks(PROFILED_TARGET_V2_STRIDE) {
+            if let Some(target) = Target::new_merchant_v2(
                 chunk,
                 self.sample_rate,
                 &self.hydrophones,
@@ -435,6 +491,24 @@ mod tests {
         let b = process_block(&mut second, 16_384);
         assert_eq!(a, b);
         assert!(rms(&a) > 1e-4, "profiled merchant rms={}", rms(&a));
+    }
+
+    #[test]
+    fn profiled_v2_scene_adds_only_the_explicit_measured_tonal_overlay() {
+        // v1 + Overseas Harriette overlay code, 140 RPM, 4 blades.
+        let scene = [45.0, 10_000.0, 6.0, 1.0, 16.0, 172.9, 0.0, 1.0, 140.0, 4.0];
+        let mut first = DspEngine::new(44_100.0);
+        let mut second = DspEngine::new(44_100.0);
+        first.set_profiled_targets_v2(&scene);
+        second.set_profiled_targets_v2(&scene);
+        assert_eq!(first.target_count(), 1);
+        let a = process_block(&mut first, 16_384);
+        let b = process_block(&mut second, 16_384);
+        assert_eq!(a, b);
+
+        let invalid_state = [45.0, 10_000.0, 6.0, 1.0, 14.0, 172.9, 0.0, 1.0, 120.0, 4.0];
+        first.set_profiled_targets_v2(&invalid_state);
+        assert_eq!(first.target_count(), 0);
     }
 
     #[test]

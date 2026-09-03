@@ -5,6 +5,69 @@
 
 use super::{SourceBand, SourceLine, SourceSpectrum, TONAL_HARMONICS};
 
+/// 현재 구현된 개별 상선 톤 유사체. 모집단 JOMOPANS 광대역 모델과 별도 선택한다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MerchantTonalOverlay {
+    /// M/V OVERSEAS HARRIETTE, 140 RPM·16 kn, keel-aspect 측정점.
+    OverseasHarriette140Rpm = 1,
+}
+
+impl MerchantTonalOverlay {
+    pub fn from_code(code: u32) -> Option<Self> {
+        match code {
+            1 => Some(Self::OverseasHarriette140Rpm),
+            _ => None,
+        }
+    }
+}
+
+/// Arveson–Vendittis Table III의 140 RPM 유의 톤 13개와 SSDG 고정 톤 2개.
+/// 준위는 keel-aspect `dB re 1 µPa @ 1 m`; 배열 순서는 데이터 파일과 동일하다.
+const OVERSEAS_HARRIETTE_140_LEVELS_DB: [f32; TONAL_HARMONICS as usize] = [
+    174.0, 174.0, 175.0, 179.0, 185.0, 176.0, 175.0, 175.0, 172.0, 163.0, 172.0, 173.0, 170.0,
+    179.0, 168.0,
+];
+
+/// 단일 측정 운항점의 톤 오버레이를 적용한다.
+///
+/// 이 함수는 다른 RPM으로 레벨을 외삽하지 않는다. 논문이 고조파 준위의 복잡하고
+/// 비단조적인 속력 의존성을 보고했기 때문이다. 주파수도 측정 RPM(140)에서 고정된다.
+pub fn apply_tonal_overlay(
+    spectrum: &mut SourceSpectrum,
+    overlay: MerchantTonalOverlay,
+    shaft_rpm: f32,
+    blade_count: u32,
+) -> bool {
+    match overlay {
+        MerchantTonalOverlay::OverseasHarriette140Rpm => {
+            if (shaft_rpm - 140.0).abs() > 0.5 || blade_count != 4 {
+                return false;
+            }
+            let shaft_rate_hz = shaft_rpm / 60.0;
+            // BR 1, FR 1, BR 2, BR 3=FR 2, BR 4, FR 3, BR 5,
+            // BR 6=FR 4, BR 7, FR 5, BR 8, BR 9=FR 6, BR 10, SSDG 24/30 Hz.
+            let shaft_multipliers = [
+                4.0, 6.0, 8.0, 12.0, 16.0, 18.0, 20.0, 24.0, 28.0, 30.0, 32.0, 36.0, 40.0,
+            ];
+            spectrum.tonal_lines = std::array::from_fn(|index| SourceLine {
+                frequency_hz: if index < shaft_multipliers.len() {
+                    shaft_rate_hz * shaft_multipliers[index]
+                } else if index == 13 {
+                    24.0
+                } else {
+                    30.0
+                },
+                level_db_re_1upa_at_1m: OVERSEAS_HARRIETTE_140_LEVELS_DB[index],
+            });
+            // 논문은 blade-rate 변조를 관찰했지만 변조 깊이의 일반화 가능한 수치를
+            // 제공하지 않는다. 임의의 포락선을 JOMOPANS 모집단 PSD에 곱하지 않는다.
+            spectrum.modulation_rate_hz = 0.0;
+            true
+        }
+    }
+}
+
 pub const DECIDECADE_CENTERS_HZ: [f32; 31] = [
     20.0, 25.2, 31.7, 40.0, 50.4, 63.5, 80.0, 100.8, 127.0, 160.0, 201.6, 254.0, 320.0, 403.2,
     508.0, 640.0, 806.3, 1015.9, 1280.0, 1612.7, 2031.9, 2560.0, 3225.4, 4063.7, 5120.0, 6450.8,
@@ -155,5 +218,38 @@ mod tests {
             .iter()
             .all(|line| line.level_db_re_1upa_at_1m.is_infinite()));
         assert_eq!(spectrum.modulation_rate_hz, 0.0);
+    }
+
+    #[test]
+    fn measured_140_rpm_overlay_reproduces_table_iii_lines() {
+        let mut spectrum = source_spectrum(MerchantProfile::Bulker, 16.0, 172.9);
+        assert!(apply_tonal_overlay(
+            &mut spectrum,
+            MerchantTonalOverlay::OverseasHarriette140Rpm,
+            140.0,
+            4,
+        ));
+        assert!((spectrum.tonal_lines[0].frequency_hz - 9.333_333).abs() < 0.001);
+        assert_eq!(spectrum.tonal_lines[0].level_db_re_1upa_at_1m, 174.0);
+        assert!((spectrum.tonal_lines[4].frequency_hz - 37.333_332).abs() < 0.001);
+        assert_eq!(spectrum.tonal_lines[4].level_db_re_1upa_at_1m, 185.0);
+        assert_eq!(spectrum.tonal_lines[13].frequency_hz, 24.0);
+        assert_eq!(spectrum.tonal_lines[13].level_db_re_1upa_at_1m, 179.0);
+        assert_eq!(spectrum.tonal_lines[14].frequency_hz, 30.0);
+        assert_eq!(spectrum.tonal_lines[14].level_db_re_1upa_at_1m, 168.0);
+        assert_eq!(spectrum.modulation_rate_hz, 0.0);
+    }
+
+    #[test]
+    fn measured_overlay_refuses_unmeasured_operating_state() {
+        let mut spectrum = source_spectrum(MerchantProfile::Bulker, 13.5, 211.0);
+        let original = spectrum.clone();
+        assert!(!apply_tonal_overlay(
+            &mut spectrum,
+            MerchantTonalOverlay::OverseasHarriette140Rpm,
+            120.0,
+            4,
+        ));
+        assert_eq!(spectrum, original);
     }
 }

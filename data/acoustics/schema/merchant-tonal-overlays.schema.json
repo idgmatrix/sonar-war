@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idgmatrix.github.io/sonar-war/schema/merchant-tonal-overlays.schema.json",
+  "title": "SSN-X 상선 협대역 측정 톤 오버레이",
+  "type": "object",
+  "required": ["schema_version", "overlays"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "1.0.0" },
+    "overlays": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id", "code", "label", "broadband_profile_id", "evidence_ref", "confidence",
+          "measurement", "lines", "observed_modulation", "applicability", "limitations"
+        ],
+        "properties": {
+          "id": { "const": "overseas-harriette-140rpm" },
+          "code": { "const": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "broadband_profile_id": { "const": "merchant-bulker-jomopans-echo" },
+          "evidence_ref": { "const": "arveson-vendittis-2000" },
+          "confidence": { "const": "B" },
+          "measurement": {
+            "type": "object",
+            "required": [
+              "vessel_count", "vessel_length_m", "vessel_displacement_t", "engine",
+              "propeller_blades", "shaft_rpm", "speed_kn", "aspect", "level_unit",
+              "systematic_uncertainty_db_max", "source_variability_std_db"
+            ],
+            "properties": {
+              "vessel_count": { "const": 1 },
+              "vessel_length_m": { "const": 172.9 },
+              "vessel_displacement_t": { "const": 25515 },
+              "engine": { "type": "string", "minLength": 1 },
+              "propeller_blades": { "const": 4 },
+              "shaft_rpm": { "const": 140 },
+              "speed_kn": { "const": 16 },
+              "aspect": { "const": "keel" },
+              "level_unit": { "const": "dB re 1 µPa @ 1 m" },
+              "systematic_uncertainty_db_max": { "const": 2 },
+              "source_variability_std_db": {
+                "type": "object",
+                "required": ["min", "max"],
+                "properties": { "min": { "const": 2 }, "max": { "const": 5 } },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 15,
+            "maxItems": 15,
+            "items": {
+              "type": "object",
+              "required": ["source", "order", "frequency_hz", "level_db"],
+              "properties": {
+                "source": {
+                  "enum": ["blade_rate", "engine_firing_rate", "blade_and_firing_overlap", "service_generator"]
+                },
+                "order": { "type": "integer", "minimum": 1 },
+                "shaft_order": { "type": "number", "exclusiveMinimum": 0 },
+                "frequency_hz": { "type": "number", "exclusiveMinimum": 0 },
+                "level_db": { "type": "number" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "observed_modulation": {
+            "type": "object",
+            "required": ["rate_hz", "synthesis_enabled", "reason"],
+            "properties": {
+              "rate_hz": { "const": 9.333333 },
+              "synthesis_enabled": { "const": false },
+              "reason": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          },
+          "applicability": { "type": "string", "minLength": 1 },
+          "limitations": {
+            "type": "array",
+            "minItems": 4,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

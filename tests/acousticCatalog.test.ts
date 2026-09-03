@@ -73,6 +73,15 @@ const merchantSchema = JSON.parse(
     'utf8',
   ),
 ) as object;
+const merchantTonalOverlays = JSON.parse(
+  readFileSync(new URL('../data/acoustics/merchant-tonal-overlays.json', import.meta.url), 'utf8'),
+);
+const merchantTonalSchema = JSON.parse(
+  readFileSync(
+    new URL('../data/acoustics/schema/merchant-tonal-overlays.schema.json', import.meta.url),
+    'utf8',
+  ),
+) as object;
 
 describe('음향 소스 카탈로그', () => {
   it('Draft 2020-12 JSON Schema를 통과한다', () => {
@@ -219,6 +228,37 @@ describe('JOMOPANS-ECHO 상선 프로파일', () => {
 
       expect(spectrumLevel).toBeCloseTo(anchor.spectrum_level_db, 5);
       expect(bandLevel).toBeCloseTo(anchor.decidecade_level_db, 5);
+    }
+  });
+});
+
+describe('상선 측정 톤 오버레이', () => {
+  it('스키마와 원 논문의 140 RPM 앵커를 보존한다', () => {
+    const validator = new Ajv2020({ allErrors: true });
+    const validate = validator.compile(merchantTonalSchema);
+    expect(validate(merchantTonalOverlays), JSON.stringify(validate.errors, null, 2)).toBe(true);
+
+    const overlay = merchantTonalOverlays.overlays[0];
+    expect(overlay.measurement).toMatchObject({
+      vessel_count: 1,
+      propeller_blades: 4,
+      shaft_rpm: 140,
+      speed_kn: 16,
+      aspect: 'keel',
+    });
+    expect(overlay.lines).toHaveLength(15);
+    expect(overlay.lines[0]).toMatchObject({ frequency_hz: 9.333333, level_db: 174 });
+    expect(overlay.lines[4]).toMatchObject({ frequency_hz: 37.333333, level_db: 185 });
+    expect(overlay.lines.at(-2)).toMatchObject({ frequency_hz: 24, level_db: 179 });
+    expect(overlay.limitations.join(' ')).toContain('단일 선박');
+  });
+
+  it('카탈로그에 존재하는 근거와 광대역 프로파일만 참조한다', () => {
+    const referenceIds = new Set(catalog.references.map((reference) => reference.id));
+    const broadbandIds = new Set(merchantProfiles.profiles.map((profile) => profile.id));
+    for (const overlay of merchantTonalOverlays.overlays) {
+      expect(referenceIds.has(overlay.evidence_ref)).toBe(true);
+      expect(broadbandIds.has(overlay.broadband_profile_id)).toBe(true);
     }
   });
 });

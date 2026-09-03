@@ -85,6 +85,10 @@ class SonarProcessor extends AudioWorkletProcessor {
         case 'profiledScene':
           if (data.targets instanceof Float32Array) this.engine.set_profiled_targets(data.targets);
           break;
+        case 'profiledSceneV2':
+          if (data.targets instanceof Float32Array)
+            this.engine.set_profiled_targets_v2(data.targets);
+          break;
         case 'ocean':
           this.engine.set_ocean(data.wind ?? 5.0, data.rain ?? 0.0);
           break;
