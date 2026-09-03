@@ -95,55 +95,119 @@ pub fn ocean_noise_level_db(
 }
 
 // ---------------------------------------------------------------------------
-// 샘플 합성 (M2): 준위 모델(위) → 실제 잡음 신호
+// 샘플 합성 (M2B): 준위 모델(위) → 실제 잡음 신호
 // ---------------------------------------------------------------------------
 
-/// 해양 배경잡음 샘플 합성기 (M2A 호환 구현).
+const THIRD_OCTAVE_CENTERS_HZ: [f32; 31] = [
+    20.0, 25.2, 31.7, 40.0, 50.4, 63.5, 80.0, 100.8, 127.0, 160.0, 201.6, 254.0,
+    320.0, 403.2, 508.0, 640.0, 806.3, 1015.9, 1280.0, 1612.7, 2031.9, 2560.0,
+    3225.4, 4063.7, 5120.0, 6450.8, 8127.5, 10240.0, 12901.6, 16255.0, 20000.0,
+];
+
+/// RBJ constant-skirt-gain band-pass. 중심 주파수의 이득은 1이다.
+#[derive(Debug, Clone)]
+struct NoiseBand {
+    b0: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    z1: f32,
+    z2: f32,
+    z3: f32,
+    z4: f32,
+    amplitude: f32,
+    rng: u64,
+}
+
+impl NoiseBand {
+    fn new(sample_rate: f32, center_hz: f32, target_nl_db: f32, seed: u64) -> Self {
+        // 두 개를 직렬 연결해 4차 1/3옥타브 대역을 만든다. 단일 2차 필터보다
+        // 저주파 난류 에너지의 대역 외 누설이 작다.
+        const THIRD_OCTAVE_Q: f32 = 4.318_473;
+        let omega = 2.0 * std::f32::consts::PI * center_hz / sample_rate;
+        let alpha = omega.sin() / (2.0 * THIRD_OCTAVE_Q);
+        let a0 = 1.0 + alpha;
+
+        // white ∈ [-1,1]의 분산은 1/3이고 one-sided PSD는 2σ²/fs.
+        // target_nl_db를 120 dB FS 기준의 선형 PSD로 바꿔 중심 이득을 교정한다.
+        let target_psd_fs = 10f32.powf((target_nl_db - 120.0) / 10.0);
+        let amplitude = (target_psd_fs * sample_rate * 1.5).sqrt();
+        Self {
+            b0: alpha / a0,
+            b2: -alpha / a0,
+            a1: -2.0 * omega.cos() / a0,
+            a2: (1.0 - alpha) / a0,
+            z1: 0.0,
+            z2: 0.0,
+            z3: 0.0,
+            z4: 0.0,
+            amplitude,
+            rng: seed,
+        }
+    }
+
+    #[inline]
+    fn next(&mut self) -> f32 {
+        let mut x = self.rng;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng = x;
+        let white = ((x >> 40) as f32 / 16_777_216.0) * 2.0 - 1.0;
+
+        let input = white * self.amplitude;
+        let first = self.b0 * input + self.z1;
+        self.z1 = -self.a1 * first + self.z2;
+        self.z2 = self.b2 * input - self.a2 * first;
+        let second = self.b0 * first + self.z3;
+        self.z3 = -self.a1 * second + self.z4;
+        self.z4 = self.b2 * first - self.a2 * second;
+        second
+    }
+}
+
+/// 해양 배경잡음 샘플 합성기.
 ///
-/// Coates/Wenz 준위 모델을 현재의 단순 신호 생성기에 연결:
-/// - xorshift64 백색 잡음 (결정적 — 멀티플레이 동기화 용이)
-/// - 1-pole 저역통과 (커트오프가 풍속에 비례 → 바람이 세면 저역 에너지 증가)
-/// - 출력 RMS는 100Hz 기준 준위(NL) + 1kHz 대역폭으로 스케일
-///
-/// 준위 규약: 200 µPa = 1.0 full scale (120 dB re 1µPa).
+/// 20 Hz–20 kHz의 1/3옥타브 중심마다 독립적인 결정적 백색잡음을 band-pass하고,
+/// Coates/Wenz + 강우 목표 PSD로 각 대역의 이득을 교정한다. 준위 규약은
+/// 200 µPa = 1.0 full scale (120 dB re 1µPa)이다.
 #[derive(Debug, Clone)]
 pub struct OceanNoise {
-    state: u64,
-    lp: f32,
-    coeff: f32,
-    gain: f32,
+    bands: Vec<NoiseBand>,
 }
 
 impl OceanNoise {
     /// 풍속/강우로 잡음 합성기 생성.
     pub fn new(sample_rate: f32, wind_speed_ms: f32, rain_mm_hr: f32) -> Self {
-        // 아직 합성 필터는 M2A의 1-pole 근사다. M2B 필터뱅크 전환 전까지
-        // Coates/Wenz의 100 Hz 중간 선박 활동 기준으로 절대 RMS만 교정한다.
-        let nl_ref = ocean_noise_level_db(100.0, wind_speed_ms, rain_mm_hr, 0.5);
-        // 100Hz 기준 스펙트럼 밀도(dB/Hz) + 1kHz 대역 → RMS amplitude
-        let gain = 10f32.powf((nl_ref + 30.0 - 120.0) / 20.0);
-        // 바람이 세면 저역 커트오프 상승 (에너지가 고역으로 퍼짐)
-        let cutoff = 20.0 + 10.0 * wind_speed_ms.max(0.0);
-        let coeff = 1.0 - (-2.0 * std::f32::consts::PI * cutoff / sample_rate).exp();
-        Self {
-            state: 0x9E37_79B9_7F4A_7C15,
-            lp: 0.0,
-            coeff,
-            gain,
-        }
+        let nyquist_guard = sample_rate * 0.45;
+        let bands = THIRD_OCTAVE_CENTERS_HZ
+            .iter()
+            .copied()
+            .filter(|center| *center < nyquist_guard)
+            .enumerate()
+            .map(|(index, center)| {
+                let nl = ocean_noise_level_db(center, wind_speed_ms, rain_mm_hr, 0.5);
+                let seed = 0x9E37_79B9_7F4A_7C15u64
+                    ^ (index as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03);
+                NoiseBand::new(sample_rate, center, nl, seed)
+            })
+            .collect();
+        Self { bands }
     }
 
-    /// 다음 샘플 (−1..1, 준위 스케일 적용됨).
+    /// 활성 필터 대역 수. 오디오 샘플레이트별 Nyquist 제외 여부 검증용.
+    pub fn band_count(&self) -> usize {
+        self.bands.len()
+    }
+
+    /// 다음 샘플 (준위 스케일 적용됨).
+    #[inline]
     pub fn next_sample(&mut self) -> f32 {
-        let mut x = self.state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.state = x;
-        let white = ((x >> 11) as f32 / 9007199254740992.0) * 2.0 - 1.0;
-        self.lp += self.coeff * (white - self.lp);
-        // 1-pole LP가 RMS를 줄이므로 3배 보상 (근사)
-        self.lp * self.gain * 3.0
+        let mut sample = 0.0;
+        for band in &mut self.bands {
+            sample += band.next();
+        }
+        sample
     }
 }
 
@@ -238,12 +302,66 @@ mod tests {
         (acc / count as f32).sqrt()
     }
 
+    fn measured_psd_db(samples: &[f32], sample_rate: f32, frequency_hz: f32) -> f32 {
+        const SEGMENT: usize = 8192;
+        let mut psd_sum = 0.0f64;
+        let mut segments = 0usize;
+        for chunk in samples.chunks_exact(SEGMENT) {
+            let mut re = 0.0f64;
+            let mut im = 0.0f64;
+            let mut window_energy = 0.0f64;
+            for (index, &sample) in chunk.iter().enumerate() {
+                let window = 0.5
+                    - 0.5
+                        * (2.0 * std::f64::consts::PI * index as f64
+                            / (SEGMENT - 1) as f64)
+                            .cos();
+                let phase = 2.0 * std::f64::consts::PI * frequency_hz as f64 * index as f64
+                    / sample_rate as f64;
+                let value = sample as f64 * window;
+                re += value * phase.cos();
+                im -= value * phase.sin();
+                window_energy += window * window;
+            }
+            psd_sum += 2.0 * (re * re + im * im) / (sample_rate as f64 * window_energy);
+            segments += 1;
+        }
+        let psd_fs = psd_sum / segments as f64;
+        10.0 * psd_fs.max(1e-20).log10() as f32 + 120.0
+    }
+
     #[test]
     fn ocean_noise_is_deterministic() {
         let mut a = OceanNoise::new(44100.0, 5.0, 0.0);
         let mut b = OceanNoise::new(44100.0, 5.0, 0.0);
         for _ in 0..1000 {
             assert_eq!(a.next_sample(), b.next_sample());
+        }
+    }
+
+    #[test]
+    fn ocean_noise_uses_only_bands_below_nyquist_guard() {
+        assert_eq!(OceanNoise::new(44100.0, 5.0, 0.0).band_count(), 30);
+        assert_eq!(OceanNoise::new(22050.0, 5.0, 0.0).band_count(), 27);
+    }
+
+    #[test]
+    fn ocean_noise_psd_tracks_coates_wenz_curve() {
+        let sample_rate = 44100.0;
+        let wind = 5.0;
+        let mut noise = OceanNoise::new(sample_rate, wind, 0.0);
+        for _ in 0..32768 {
+            noise.next_sample();
+        }
+        let samples: Vec<f32> = (0..262144).map(|_| noise.next_sample()).collect();
+        for frequency in [50.4, 100.8, 201.6, 508.0, 1015.9, 2031.9, 5120.0, 10240.0] {
+            let measured = measured_psd_db(&samples, sample_rate, frequency);
+            let expected = coates_wenz_noise_level_db(frequency, 0.5, wind);
+            assert!(
+                (measured - expected).abs() <= 2.0,
+                "{frequency} Hz: measured={measured:.2} expected={expected:.2} error={:.2} dB",
+                measured - expected
+            );
         }
     }
 
