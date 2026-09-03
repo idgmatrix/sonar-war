@@ -10,7 +10,7 @@
     <div id="app">
       <header class="panel">
         <h1>SSN-X BLACKTIDE — SONAR SIMULATOR</h1>
-        <p class="sub">M0 SCAFFOLDING · Rust/WASM DSP CORE</p>
+        <p class="sub">M2 · RUST/WASM SONAR SYNTHESIS · LOFAR / DEMON / DOPPLER</p>
       </header>
 
       <main class="panel grid">
@@ -30,11 +30,31 @@
           <div class="label">AUDIO DSP</div>
           <div class="value small" id="audio-status">STANDBY</div>
         </section>
+        <section class="readout">
+          <div class="label">WORKLET CPU (budget &lt; 50%)</div>
+          <div class="value small" id="cpu">—</div>
+        </section>
+        <section class="readout">
+          <div class="label">OUTPUT LEVEL (dBFS)</div>
+          <div class="value small" id="rms">—</div>
+        </section>
+        <section class="readout">
+          <div class="label">ACTIVE SCENE</div>
+          <div class="value small" id="scene">—</div>
+        </section>
       </main>
 
       <footer class="panel">
         <button id="start" class="btn">▶ START OPERATION</button>
         <span class="hint">클릭 시 오디오 컨텍스트 + WASM DSP 시작</span>
+        <div class="scene-buttons">
+          <span class="hint">씬 (도플러/RPM 청취):</span>
+          <button id="scene-demo" class="btn small">DEMO</button>
+          <button id="scene-approach" class="btn small">APPROACH</button>
+          <button id="scene-recede" class="btn small">RECEDING</button>
+          <button id="scene-rpmUp" class="btn small">RPM↑</button>
+          <button id="scene-rpmDown" class="btn small">RPM↓</button>
+        </div>
       </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>

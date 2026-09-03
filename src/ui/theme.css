@@ -107,8 +107,14 @@ h1 {
   color: var(--ok);
 }
 
+.value.warn {
+  color: var(--warn);
+  text-shadow: 0 0 10px rgba(255, 204, 51, 0.55);
+}
+
 footer.panel {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
 }
@@ -134,6 +140,20 @@ footer.panel {
 .btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.btn.small {
+  font-size: 12px;
+  letter-spacing: 1px;
+  padding: 6px 12px;
+}
+
+.scene-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .hint {

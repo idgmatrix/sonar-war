@@ -86,6 +86,57 @@ pub fn ocean_noise_level_db(
     ])
 }
 
+// ---------------------------------------------------------------------------
+// 샘플 합성 (M2): 준위 모델(위) → 실제 잡음 신호
+// ---------------------------------------------------------------------------
+
+/// 해양 배경잡음 샘플 합성기 (M2).
+///
+/// M1의 Knudsen C₀ 준위 모델을 실제 신호로 구현:
+/// - xorshift64 백색 잡음 (결정적 — 멀티플레이 동기화 용이)
+/// - 1-pole 저역통과 (커트오프가 풍속에 비례 → 바람이 세면 저역 에너지 증가)
+/// - 출력 RMS는 100Hz 기준 준위(NL) + 1kHz 대역폭으로 스케일
+///
+/// 준위 규약: 200 µPa = 1.0 full scale (120 dB re 1µPa).
+#[derive(Debug, Clone)]
+pub struct OceanNoise {
+    state: u64,
+    lp: f32,
+    coeff: f32,
+    gain: f32,
+}
+
+impl OceanNoise {
+    /// 풍속/강우로 잡음 합성기 생성.
+    pub fn new(sample_rate: f32, wind_speed_ms: f32, rain_mm_hr: f32) -> Self {
+        let nl_ref = ocean_noise_level_db(100.0, wind_speed_ms, rain_mm_hr, 0.0);
+        // 100Hz 기준 스펙트럼 밀도(dB/Hz) + 1kHz 대역 → RMS amplitude
+        let gain = 10f32.powf((nl_ref + 30.0 - 120.0) / 20.0);
+        // 바람이 세면 저역 커트오프 상승 (에너지가 고역으로 퍼짐)
+        let cutoff = 20.0 + 10.0 * wind_speed_ms.max(0.0);
+        let coeff = 1.0 - (-2.0 * std::f32::consts::PI * cutoff / sample_rate).exp();
+        Self {
+            state: 0x9E37_79B9_7F4A_7C15,
+            lp: 0.0,
+            coeff,
+            gain,
+        }
+    }
+
+    /// 다음 샘플 (−1..1, 준위 스케일 적용됨).
+    pub fn next_sample(&mut self) -> f32 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        let white = ((x >> 11) as f32 / 9007199254740992.0) * 2.0 - 1.0;
+        self.lp += self.coeff * (white - self.lp);
+        // 1-pole LP가 RMS를 줄이므로 3배 보상 (근사)
+        self.lp * self.gain * 3.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +188,44 @@ mod tests {
         let combined = combine_db_levels(&[60.0, 40.0]);
         // 10log10(10^6 + 10^4) = 10log10(1.01e6) ≈ 60.043
         assert!((combined - 60.043).abs() < 0.01);
+    }
+
+    // --- M2: 샘플 합성 ---
+
+    fn rms(n: &mut OceanNoise, count: usize) -> f32 {
+        let mut acc = 0f32;
+        for _ in 0..count {
+            let s = n.next_sample();
+            acc += s * s;
+        }
+        (acc / count as f32).sqrt()
+    }
+
+    #[test]
+    fn ocean_noise_is_deterministic() {
+        let mut a = OceanNoise::new(44100.0, 5.0, 0.0);
+        let mut b = OceanNoise::new(44100.0, 5.0, 0.0);
+        for _ in 0..1000 {
+            assert_eq!(a.next_sample(), b.next_sample());
+        }
+    }
+
+    #[test]
+    fn ocean_noise_rms_rises_with_wind() {
+        let mut calm = OceanNoise::new(44100.0, 0.0, 0.0);
+        let mut storm = OceanNoise::new(44100.0, 15.0, 0.0);
+        let rms_calm = rms(&mut calm, 16384);
+        let rms_storm = rms(&mut storm, 16384);
+        assert!(rms_storm > rms_calm * 1.5, "{rms_storm} vs {rms_calm}");
+    }
+
+    #[test]
+    fn ocean_noise_bounded_and_nonzero() {
+        let mut n = OceanNoise::new(44100.0, 8.0, 5.0);
+        for _ in 0..16384 {
+            let s = n.next_sample();
+            assert!(s.abs() < 1.0);
+        }
+        assert!(rms(&mut n, 16384) > 1e-5);
     }
 }

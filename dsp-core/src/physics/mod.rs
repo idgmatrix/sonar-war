@@ -25,7 +25,10 @@ pub fn thorp_absorption_db_per_km(freq_khz: f32) -> f32 {
 /// TL = 20log₁₀R + α(f)·R  (R km 단위)
 pub fn transmission_loss_db(range_m: f32, freq_khz: f32) -> f32 {
     let r_km = range_m / 1000.0;
-    let spherical = 20.0 * r_km.log10();
+    // 구면 확산: 20log10(R), R은 **미터** (1m = 0dB 기준).
+    // km을 쓰면 전체 TL이 20log10(1000)=60dB 작아져 수신 준위가 1000배 과대된다.
+    let spherical = 20.0 * range_m.max(1.0).log10();
+    // Thorp 흡수: α(f) dB/km × R km
     let absorption = thorp_absorption_db_per_km(freq_khz) * r_km;
     spherical + absorption
 }
@@ -219,6 +222,17 @@ mod tests {
     }
 
     #[test]
+    fn tl_absolute_value_spherical_in_meters() {
+        // 회귀 방지: 구면 확산은 20log10(R[미터]). km을 쓰면 60dB 과소 → 수신 1000배 과대.
+        // 1km/저주파: 20log10(1000)=60dB + 흡수(미미) ≈ 60dB.
+        let tl_1km = transmission_loss_db(1000.0, 0.1);
+        assert!((tl_1km - 60.0).abs() < 1.0, "TL@1km/100Hz = {tl_1km} dB (≈60dB 기대)");
+        // 10km: 20log10(10000)=80dB.
+        let tl_10km = transmission_loss_db(10000.0, 0.1);
+        assert!((tl_10km - 80.0).abs() < 2.0, "TL@10km/100Hz = {tl_10km} dB (≈80dB 기대)");
+    }
+
+    #[test]
     fn snr_matches_equation() {
         // SNR = SL - TL - (NL - DI)
         let snr = snr_db(200.0, 120.0, 60.0, 10.0);
@@ -298,8 +312,9 @@ mod tests {
         assert!(min_depth >= 300.0 - 1e-3, "음속최소층이 약층 바닥 아래여야 함: {min_depth}");
 
         let grid = TlGrid::new(profile, 1.0);
-        // 조용한 표적(저 SL) + 중거리: 음영 아님엔 검출 가능, 음영엔 이탈.
-        let (sl, di, dt, nl) = (120.0f32, 10.0, 5.0, 60.0);
+        // SL을 임계 근처로 선택: 음영 아님엔 임계 초과, 음영 벌점(45dB)엔 임계 이하.
+        // (정확한 TL에서 10km 표적은 저 SL이면 잡음 바닥 아래라 SL을 충분히 줌)
+        let (sl, di, dt, nl) = (160.0f32, 10.0, 5.0, 60.0);
         let src_depth = 20.0; // 표층 음원
         let range = 10000.0;
         let threshold = 5.0; // SE 임계 (dB)
