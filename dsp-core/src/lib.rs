@@ -16,22 +16,18 @@
 pub mod beamform;
 pub mod noise;
 pub mod physics;
+pub mod propagation;
+pub mod receiver;
 pub mod source;
 
 use wasm_bindgen::prelude::*;
 
-use beamform::{beam_delay, DelayAndSum, DEFAULT_SOUND_SPEED};
+use beamform::{DelayAndSum, DEFAULT_SOUND_SPEED};
 use noise::OceanNoise;
-use physics::transmission_loss_db;
-use source::{
-    blade_rate_hz, broadband_level_db, demon_envelope, doppler_factor, tonal_harmonic_level_db,
-    TONAL_HARMONICS,
-};
+use propagation::{propagate, PropagationGeometry};
+use receiver::{receive, DEFAULT_FULL_SCALE_DB_RE_1UPA};
+use source::{demon_envelope, source_spectrum, TONAL_HARMONICS};
 
-/// 캐비테이션 광대역 TL 기준 주파수 (kHz).
-const BROADBAND_REF_KHZ: f32 = 1.0;
-/// Full scale 기준 (dB re 1µPa) — 200 µPa = 1.0.
-const FULL_SCALE_DB: f32 = 120.0;
 /// 가상 구형 어레이 하이드로폰 수.
 const HYDROPHONE_COUNT: usize = 16;
 /// 구형 어레이 반지름 (m) — 보우 어레이 DIA 8.4m.
@@ -44,6 +40,34 @@ const BASS_DECIMATION: u64 = 16;
 /// 표적 1개당 float 수: [bearing_deg, range_m, depth_m, rpm, blades, tonal_db, cavitation, rel_vel_ms]
 const TARGET_STRIDE: usize = 8;
 
+/// JS/WASM flat array를 계층 입력으로 넘기기 전에 단위가 있는 필드로 해석한 값.
+#[derive(Debug, Clone, Copy)]
+struct TargetDescriptor {
+    bearing_deg: f32,
+    range_m: f32,
+    depth_m: f32,
+    rpm: f32,
+    blade_count: u32,
+    tonal_level_db_re_1upa_at_1m: f32,
+    cavitation: f32,
+    relative_velocity_ms: f32,
+}
+
+impl TargetDescriptor {
+    fn from_flat(values: &[f32]) -> Option<Self> {
+        (values.len() >= TARGET_STRIDE).then(|| Self {
+            bearing_deg: values[0],
+            range_m: values[1],
+            depth_m: values[2],
+            rpm: values[3],
+            blade_count: values[4] as u32,
+            tonal_level_db_re_1upa_at_1m: values[5],
+            cavitation: values[6],
+            relative_velocity_ms: values[7],
+        })
+    }
+}
+
 /// Fibonacci 구: 반지름 `radius` 구에 균등한 n점.
 fn fibonacci_sphere(n: usize, radius: f32) -> Vec<[f32; 3]> {
     let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
@@ -52,7 +76,11 @@ fn fibonacci_sphere(n: usize, radius: f32) -> Vec<[f32; 3]> {
             let y = 1.0 - 2.0 * (i as f32 + 0.5) / n as f32;
             let r = (1.0 - y * y).sqrt();
             let theta = golden * i as f32;
-            [radius * r * theta.cos(), radius * y, radius * r * theta.sin()]
+            [
+                radius * r * theta.cos(),
+                radius * y,
+                radius * r * theta.sin(),
+            ]
         })
         .collect()
 }
@@ -77,64 +105,42 @@ struct Target {
 
 impl Target {
     fn new(
-        bearing_deg: f32,
-        range_m: f32,
-        depth_m: f32,
-        rpm: f32,
-        blade_count: u32,
-        tonal_level_db: f32,
-        cavitation: f32,
-        rel_vel_ms: f32,
+        descriptor: TargetDescriptor,
         hydrophones: &[[f32; 3]],
         max_delay_samples: usize,
     ) -> Self {
-        // 표적 방향: 수평 거리 + 수심
-        let az = bearing_deg.to_radians();
-        let horizontal = (range_m * range_m - depth_m * depth_m).max(0.0).sqrt();
-        let r = range_m.max(1.0);
-        let unit = [
-            horizontal * az.cos() / r,
-            depth_m / r,
-            horizontal * az.sin() / r,
-        ];
-
-        // 실시간 제약: p_max 상수 시프트 (빔포머와 동일한 규칙)
-        let pmax = hydrophones
-            .iter()
-            .map(|p| beam_delay(*p, unit, DEFAULT_SOUND_SPEED))
-            .fold(0f32, f32::max);
-        let delays = hydrophones
-            .iter()
-            .map(|p| (pmax - beam_delay(*p, unit, DEFAULT_SOUND_SPEED)).max(0.0))
-            .collect::<Vec<_>>();
-
-        let dop = doppler_factor(rel_vel_ms, DEFAULT_SOUND_SPEED);
-        let blade = blade_rate_hz(rpm, blade_count).max(0.1);
-
-        let mut tonal_amp = [0.0f32; TONAL_HARMONICS as usize];
-        let mut f_dop = [0.0f32; TONAL_HARMONICS as usize];
-        for (i, n) in (1..=TONAL_HARMONICS).enumerate() {
-            let f = blade * n as f32 * dop;
-            let level = tonal_harmonic_level_db(n, tonal_level_db);
-            let tl = transmission_loss_db(range_m, f / 1000.0);
-            tonal_amp[i] = 10f32.powf((level - tl - FULL_SCALE_DB) / 20.0);
-            f_dop[i] = f;
-        }
-
-        let bb_level = broadband_level_db(rpm, cavitation);
-        let bb_tl = transmission_loss_db(range_m, BROADBAND_REF_KHZ);
-        let cav_amp = 10f32.powf((bb_level - bb_tl - FULL_SCALE_DB) / 20.0);
+        let source = source_spectrum(
+            descriptor.rpm,
+            descriptor.blade_count,
+            descriptor.tonal_level_db_re_1upa_at_1m,
+            descriptor.cavitation,
+        );
+        let propagated = propagate(
+            &source,
+            PropagationGeometry {
+                bearing_deg: descriptor.bearing_deg,
+                range_m: descriptor.range_m,
+                source_depth_m: descriptor.depth_m,
+                // 기존 8-float WASM 계약에는 자함 수심이 없어 원점을 유지한다.
+                receiver_depth_m: 0.0,
+                relative_velocity_ms: descriptor.relative_velocity_ms,
+            },
+            hydrophones,
+            DEFAULT_SOUND_SPEED,
+        );
+        let received = receive(&propagated, DEFAULT_FULL_SCALE_DB_RE_1UPA);
 
         Self {
-            delays,
-            tonal_amp,
-            f_dop,
-            cav_amp,
-            blade_dop: blade * dop,
+            delays: received.hydrophone_delays_s,
+            tonal_amp: received.tonal_amplitude_fs,
+            f_dop: received.tonal_frequency_hz,
+            cav_amp: received.broadband_amplitude_fs,
+            blade_dop: received.modulation_rate_hz,
             // 지연 범위 0..2R/c (구형 어레이) → 2× 최대단일지연 용량
             noise_buf: vec![0.0f32; max_delay_samples * 2 + 2],
             noise_pos: 0,
-            rng: 0x9E37_79B9_7F4A_7C15 ^ (blade_count as u64).wrapping_mul(0x2545_F491_4F6C_DD1D),
+            rng: 0x9E37_79B9_7F4A_7C15
+                ^ (descriptor.blade_count as u64).wrapping_mul(0x2545_F491_4F6C_DD1D),
         }
     }
 
@@ -144,7 +150,11 @@ impl Target {
         let d = delay_samples.max(0.0).min(cap as f32 - 2.0);
         let i = d.floor() as usize;
         let frac = d - i as f32;
-        let newest = if self.noise_pos == 0 { cap - 1 } else { self.noise_pos - 1 };
+        let newest = if self.noise_pos == 0 {
+            cap - 1
+        } else {
+            self.noise_pos - 1
+        };
         let idx0 = newest.wrapping_sub(i) % cap;
         let idx1 = newest.wrapping_sub(i + 1) % cap;
         self.noise_buf[idx0] * (1.0 - frac) + self.noise_buf[idx1] * frac
@@ -188,7 +198,8 @@ impl DspEngine {
     #[wasm_bindgen(constructor)]
     pub fn new(sample_rate: f32) -> Self {
         let hydrophones = fibonacci_sphere(HYDROPHONE_COUNT, ARRAY_RADIUS_M);
-        let max_delay_samples = (ARRAY_RADIUS_M / DEFAULT_SOUND_SPEED * sample_rate).ceil() as usize;
+        let max_delay_samples =
+            (ARRAY_RADIUS_M / DEFAULT_SOUND_SPEED * sample_rate).ceil() as usize;
         let array = DelayAndSum::new(hydrophones.clone(), DEFAULT_SOUND_SPEED, sample_rate);
         let mut engine = Self {
             sample_rate,
@@ -212,21 +223,13 @@ impl DspEngine {
     pub fn set_targets(&mut self, data: &[f32]) {
         self.targets.clear();
         for chunk in data.chunks(TARGET_STRIDE) {
-            if chunk.len() < TARGET_STRIDE {
-                break;
+            if let Some(descriptor) = TargetDescriptor::from_flat(chunk) {
+                self.targets.push(Target::new(
+                    descriptor,
+                    &self.hydrophones,
+                    self.max_delay_samples,
+                ));
             }
-            self.targets.push(Target::new(
-                chunk[0],
-                chunk[1],
-                chunk[2],
-                chunk[3],
-                chunk[4] as u32,
-                chunk[5],
-                chunk[6],
-                chunk[7],
-                &self.hydrophones,
-                self.max_delay_samples,
-            ));
         }
     }
 
@@ -290,7 +293,7 @@ impl DspEngine {
             }
 
             let beam_out = self.array.process_sample(&self.mixed, travel);
-            if self.sample_index % BASS_DECIMATION == 0 {
+            if self.sample_index.is_multiple_of(BASS_DECIMATION) {
                 for bin in 0..BASS_BINS {
                     let az = 2.0 * std::f32::consts::PI * bin as f32 / BASS_BINS as f32;
                     // 파원 방위의 반대가 파동 진행 방향이다.
@@ -312,9 +315,8 @@ impl DspEngine {
 fn demo_scene() -> Vec<f32> {
     vec![
         // bearing, range, depth, rpm, blades, tonal_db, cavitation, rel_vel
-        45.0, 3000.0, 50.0, 90.0, 5.0, 150.0, 0.3, 5.0,
-        300.0, 8000.0, 200.0, 70.0, 4.0, 145.0, 0.1, -3.0,
-        0.0, 1500.0, 30.0, 110.0, 6.0, 155.0, 0.6, 0.0,
+        45.0, 3000.0, 50.0, 90.0, 5.0, 150.0, 0.3, 5.0, 300.0, 8000.0, 200.0, 70.0, 4.0, 145.0, 0.1,
+        -3.0, 0.0, 1500.0, 30.0, 110.0, 6.0, 155.0, 0.6, 0.0,
     ]
 }
 
@@ -353,7 +355,9 @@ mod tests {
     }
 
     fn zero_crossings(buf: &[f32]) -> usize {
-        buf.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count()
+        buf.windows(2)
+            .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+            .count()
     }
 
     #[test]
@@ -421,8 +425,7 @@ mod tests {
 
     #[test]
     fn bass_scan_peaks_near_target_bearing() {
-        let mut engine =
-            engine_with_targets(&[45.0, 500.0, 0.0, 120.0, 6.0, 170.0, 1.0, 0.0]);
+        let mut engine = engine_with_targets(&[45.0, 500.0, 0.0, 120.0, 6.0, 170.0, 1.0, 0.0]);
         let _ = process_block(&mut engine, 32768);
         let mut scan = vec![0.0; BASS_BINS];
         engine.bass_scan(&mut scan);
@@ -436,10 +439,6 @@ mod tests {
         let circular_error = peak
             .abs_diff(expected)
             .min(BASS_BINS - peak.abs_diff(expected));
-        assert!(
-            circular_error <= 1,
-            "peak={}° expected=45°",
-            peak * 5
-        );
+        assert!(circular_error <= 1, "peak={}° expected=45°", peak * 5);
     }
 }

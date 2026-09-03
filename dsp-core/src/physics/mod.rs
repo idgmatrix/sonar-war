@@ -52,9 +52,11 @@ pub fn mackenzie_sound_speed(temp_c: f32, salinity_psu: f32, depth_m: f32) -> f3
     let d = depth_m;
     let t = temp_c;
     let s = salinity_psu;
-    1448.96 + 4.591 * t - 0.053 * t * t + 0.000237 * t * t * t
+    1448.96 + 4.591 * t - 0.053 * t * t
+        + 0.000237 * t * t * t
         + (1.340 - 0.010 * s) * (s - 35.0)
-        + 0.0163 * d + 0.00017 * d * d
+        + 0.0163 * d
+        + 0.00017 * d * d
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +89,8 @@ impl TemperatureProfile {
         } else if d >= self.thermocline_bottom_m {
             self.deep_temp_c
         } else {
-            let t = (d - self.thermocline_top_m) / (self.thermocline_bottom_m - self.thermocline_top_m);
+            let t =
+                (d - self.thermocline_top_m) / (self.thermocline_bottom_m - self.thermocline_top_m);
             self.surface_temp_c + t * (self.deep_temp_c - self.surface_temp_c)
         }
     }
@@ -113,7 +116,11 @@ impl SoundSpeedProfile {
         let mut depths = Vec::with_capacity(n);
         let mut sound_speed = Vec::with_capacity(n);
         for i in 0..n {
-            let d = if n == 1 { 0.0 } else { max_depth_m * i as f32 / (n - 1) as f32 };
+            let d = if n == 1 {
+                0.0
+            } else {
+                max_depth_m * i as f32 / (n - 1) as f32
+            };
             let t = profile.temp_at(d);
             depths.push(d);
             sound_speed.push(mackenzie_sound_speed(t, profile.salinity_psu, d));
@@ -226,10 +233,16 @@ mod tests {
         // 회귀 방지: 구면 확산은 20log10(R[미터]). km을 쓰면 60dB 과소 → 수신 1000배 과대.
         // 1km/저주파: 20log10(1000)=60dB + 흡수(미미) ≈ 60dB.
         let tl_1km = transmission_loss_db(1000.0, 0.1);
-        assert!((tl_1km - 60.0).abs() < 1.0, "TL@1km/100Hz = {tl_1km} dB (≈60dB 기대)");
+        assert!(
+            (tl_1km - 60.0).abs() < 1.0,
+            "TL@1km/100Hz = {tl_1km} dB (≈60dB 기대)"
+        );
         // 10km: 20log10(10000)=80dB.
         let tl_10km = transmission_loss_db(10000.0, 0.1);
-        assert!((tl_10km - 80.0).abs() < 2.0, "TL@10km/100Hz = {tl_10km} dB (≈80dB 기대)");
+        assert!(
+            (tl_10km - 80.0).abs() < 2.0,
+            "TL@10km/100Hz = {tl_10km} dB (≈80dB 기대)"
+        );
     }
 
     #[test]
@@ -285,8 +298,14 @@ mod tests {
                     // 수식 직접 대조
                     let expect_tl = transmission_loss_db(range, freq);
                     let expect_se = sl - expect_tl - (nl - di) - dt;
-                    assert!((tl - expect_tl).abs() < 1e-4, "TL mismatch f={freq} R={range} d={tgt_depth}");
-                    assert!((se - expect_se).abs() < 1e-4, "SE mismatch f={freq} R={range} d={tgt_depth}");
+                    assert!(
+                        (tl - expect_tl).abs() < 1e-4,
+                        "TL mismatch f={freq} R={range} d={tgt_depth}"
+                    );
+                    assert!(
+                        (se - expect_se).abs() < 1e-4,
+                        "SE mismatch f={freq} R={range} d={tgt_depth}"
+                    );
                 }
             }
         }
@@ -309,7 +328,10 @@ mod tests {
         );
         // 음속최소층은 심층(300m 이하, 4°C)에 있어야 함
         let min_depth = profile.min_sound_speed_depth();
-        assert!(min_depth >= 300.0 - 1e-3, "음속최소층이 약층 바닥 아래여야 함: {min_depth}");
+        assert!(
+            min_depth >= 300.0 - 1e-3,
+            "음속최소층이 약층 바닥 아래여야 함: {min_depth}"
+        );
 
         let grid = TlGrid::new(profile, 1.0);
         // SL을 임계 근처로 선택: 음영 아님엔 임계 초과, 음영 벌점(45dB)엔 임계 이하.
@@ -320,13 +342,28 @@ mod tests {
         let threshold = 5.0; // SE 임계 (dB)
 
         // 약층 위 표적(200m): 음영 아님 → SE 임계 초과
-        let se_above = signal_excess_db(snr_db(sl, grid.transmission_loss(range, src_depth, 200.0), nl, di), dt);
-        assert!(se_above > threshold, "약층 위 표적은 임계 초과여야 함: {se_above}");
+        let se_above = signal_excess_db(
+            snr_db(sl, grid.transmission_loss(range, src_depth, 200.0), nl, di),
+            dt,
+        );
+        assert!(
+            se_above > threshold,
+            "약층 위 표적은 임계 초과여야 함: {se_above}"
+        );
 
         // 약층 아래 표적(400m): 음영 진입 → SE 임계 이하
-        assert!(grid.is_in_shadow_zone(src_depth, 400.0), "400m 표적은 음영 구역");
-        let se_below = signal_excess_db(snr_db(sl, grid.transmission_loss(range, src_depth, 400.0), nl, di), dt);
-        assert!(se_below < threshold, "음영 표적은 임계 이하로 떨어져야 함: {se_below}");
+        assert!(
+            grid.is_in_shadow_zone(src_depth, 400.0),
+            "400m 표적은 음영 구역"
+        );
+        let se_below = signal_excess_db(
+            snr_db(sl, grid.transmission_loss(range, src_depth, 400.0), nl, di),
+            dt,
+        );
+        assert!(
+            se_below < threshold,
+            "음영 표적은 임계 이하로 떨어져야 함: {se_below}"
+        );
 
         // 음영 진입으로 SE가 실제로 감소
         assert!(se_below < se_above);

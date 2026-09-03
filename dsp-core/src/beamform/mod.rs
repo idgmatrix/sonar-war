@@ -46,7 +46,9 @@ impl DelayAndSum {
             .fold(0f32, f32::max);
         let max_delay_samples = (max_r / sound_speed * sample_rate).ceil() as usize;
         let capacity = max_delay_samples * 2 + 16;
-        let buffers = (0..hydrophones.len()).map(|_| vec![0.0f32; capacity]).collect();
+        let buffers = (0..hydrophones.len())
+            .map(|_| vec![0.0f32; capacity])
+            .collect();
         Self {
             hydrophones,
             sound_speed,
@@ -138,7 +140,14 @@ mod tests {
     fn sphere_array() -> Vec<[f32; 3]> {
         // 지름 8.4m 구형 어레이: 단순 6점 (±축)
         let r = 4.2f32;
-        vec![[r, 0.0, 0.0], [-r, 0.0, 0.0], [0.0, r, 0.0], [0.0, -r, 0.0], [0.0, 0.0, r], [0.0, 0.0, -r]]
+        vec![
+            [r, 0.0, 0.0],
+            [-r, 0.0, 0.0],
+            [0.0, r, 0.0],
+            [0.0, -r, 0.0],
+            [0.0, 0.0, r],
+            [0.0, 0.0, -r],
+        ]
     }
 
     #[test]
@@ -164,7 +173,12 @@ mod tests {
     }
 
     /// 하이드로폰별 신호를 `n`샘플 공급하고, `steer`로 빔 출력 피크 진폭 측정.
-    fn feed_and_peak(das: &mut DelayAndSum, per_hydro: &[Vec<f32>], n: usize, steer: [f32; 3]) -> f32 {
+    fn feed_and_peak(
+        das: &mut DelayAndSum,
+        per_hydro: &[Vec<f32>],
+        n: usize,
+        steer: [f32; 3],
+    ) -> f32 {
         let mut peak = 0f32;
         for i in 0..n {
             let row: Vec<f32> = per_hydro.iter().map(|v| v[i % v.len()]).collect();
@@ -174,11 +188,20 @@ mod tests {
     }
 
     /// `dir` 방향에서 오는 f Hz 파동의 하이드로폰별 신호 (x_h(t) = cos(2πf(t − p_h·dir/c))).
-    fn wave_from(arr: &[[f32; 3]], dir: [f32; 3], f: f32, fs: f32, c: f32, n: usize) -> Vec<Vec<f32>> {
+    fn wave_from(
+        arr: &[[f32; 3]],
+        dir: [f32; 3],
+        f: f32,
+        fs: f32,
+        c: f32,
+        n: usize,
+    ) -> Vec<Vec<f32>> {
         arr.iter()
             .map(|p| {
                 let delay = (p[0] * dir[0] + p[1] * dir[1] + p[2] * dir[2]) / c;
-                (0..n).map(|i| (2.0 * PI * f * (i as f32 / fs - delay)).cos()).collect()
+                (0..n)
+                    .map(|i| (2.0 * PI * f * (i as f32 / fs - delay)).cos())
+                    .collect()
             })
             .collect()
     }

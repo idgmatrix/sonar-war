@@ -31,18 +31,13 @@ pub fn coates_wenz_components(
         turbulence_db: 17.0 - 30.0 * f_khz.log10(),
         shipping_db: 40.0 + 20.0 * (shipping - 0.5) + 26.0 * f_khz.log10()
             - 60.0 * (f_khz + 0.03).log10(),
-        wind_db: 50.0 + 7.5 * wind.sqrt() + 20.0 * f_khz.log10()
-            - 40.0 * (f_khz + 0.4).log10(),
+        wind_db: 50.0 + 7.5 * wind.sqrt() + 20.0 * f_khz.log10() - 40.0 * (f_khz + 0.4).log10(),
         thermal_db: -15.0 + 20.0 * f_khz.log10(),
     }
 }
 
 /// Coates/Wenz 네 성분을 전력 합성한 주변 소음 스펙트럼 준위.
-pub fn coates_wenz_noise_level_db(
-    freq_hz: f32,
-    shipping_activity: f32,
-    wind_speed_ms: f32,
-) -> f32 {
+pub fn coates_wenz_noise_level_db(freq_hz: f32, shipping_activity: f32, wind_speed_ms: f32) -> f32 {
     let levels = coates_wenz_components(freq_hz, shipping_activity, wind_speed_ms);
     combine_db_levels(&[
         levels.turbulence_db,
@@ -99,9 +94,9 @@ pub fn ocean_noise_level_db(
 // ---------------------------------------------------------------------------
 
 const THIRD_OCTAVE_CENTERS_HZ: [f32; 31] = [
-    20.0, 25.2, 31.7, 40.0, 50.4, 63.5, 80.0, 100.8, 127.0, 160.0, 201.6, 254.0,
-    320.0, 403.2, 508.0, 640.0, 806.3, 1015.9, 1280.0, 1612.7, 2031.9, 2560.0,
-    3225.4, 4063.7, 5120.0, 6450.8, 8127.5, 10240.0, 12901.6, 16255.0, 20000.0,
+    20.0, 25.2, 31.7, 40.0, 50.4, 63.5, 80.0, 100.8, 127.0, 160.0, 201.6, 254.0, 320.0, 403.2,
+    508.0, 640.0, 806.3, 1015.9, 1280.0, 1612.7, 2031.9, 2560.0, 3225.4, 4063.7, 5120.0, 6450.8,
+    8127.5, 10240.0, 12901.6, 16255.0, 20000.0,
 ];
 
 /// RBJ constant-skirt-gain band-pass. 중심 주파수의 이득은 1이다.
@@ -306,16 +301,15 @@ mod tests {
         const SEGMENT: usize = 8192;
         let mut psd_sum = 0.0f64;
         let mut segments = 0usize;
-        for chunk in samples.chunks_exact(SEGMENT) {
+        let (chunks, _) = samples.as_chunks::<SEGMENT>();
+        for chunk in chunks {
             let mut re = 0.0f64;
             let mut im = 0.0f64;
             let mut window_energy = 0.0f64;
             for (index, &sample) in chunk.iter().enumerate() {
                 let window = 0.5
                     - 0.5
-                        * (2.0 * std::f64::consts::PI * index as f64
-                            / (SEGMENT - 1) as f64)
-                            .cos();
+                        * (2.0 * std::f64::consts::PI * index as f64 / (SEGMENT - 1) as f64).cos();
                 let phase = 2.0 * std::f64::consts::PI * frequency_hz as f64 * index as f64
                     / sample_rate as f64;
                 let value = sample as f64 * window;
