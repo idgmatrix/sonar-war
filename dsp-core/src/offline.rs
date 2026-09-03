@@ -192,6 +192,37 @@ pub fn strongest_peak(
     })
 }
 
+/// 알려진 주파수의 정현파 RMS 준위(dB re 입력 단위)를 Hann 직교 검파로 측정한다.
+///
+/// FFT 빈 중심과 일치하지 않는 협대역 선도 정확히 측정하며, 충분한 관측 시간에서는
+/// 인접 선의 누설을 Hann 창이 억제한다. 반환값은 PSD가 아니라 선 전체의 RMS 준위다.
+pub fn tone_rms_level_db(samples: &[f32], sample_rate_hz: f64, frequency_hz: f64) -> Option<f64> {
+    if samples.len() < 2
+        || !sample_rate_hz.is_finite()
+        || sample_rate_hz <= 0.0
+        || !frequency_hz.is_finite()
+        || frequency_hz <= 0.0
+        || frequency_hz >= sample_rate_hz * 0.5
+    {
+        return None;
+    }
+    let denominator = (samples.len() - 1) as f64;
+    let mut real = 0.0;
+    let mut imaginary = 0.0;
+    let mut window_sum = 0.0;
+    for (index, &sample) in samples.iter().enumerate() {
+        let window = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * index as f64 / denominator).cos();
+        let phase = 2.0 * std::f64::consts::PI * frequency_hz * index as f64 / sample_rate_hz;
+        let value = sample as f64 * window;
+        real += value * phase.cos();
+        imaginary -= value * phase.sin();
+        window_sum += window;
+    }
+    let peak_amplitude = 2.0 * real.hypot(imaginary) / window_sum;
+    let rms = peak_amplitude / std::f64::consts::SQRT_2;
+    Some(20.0 * rms.max(f64::MIN_POSITIVE).log10())
+}
+
 /// 광대역 압력의 제곱 포락선에서 DC를 제거한 DEMON PSD를 계산한다.
 pub fn demon_spectrum(samples: &[f32], sample_rate_hz: f64) -> PowerSpectrum {
     if samples.is_empty() {
@@ -346,6 +377,23 @@ mod tests {
 
         assert!((peak.frequency_hz - frequency).abs() < 0.05);
         assert!((integrated_power - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn hann_quadrature_recovers_non_bin_centered_rms_level() {
+        let sample_rate = 1024.0;
+        let frequency = 73.25;
+        let expected_rms_level_db = 120.0;
+        let peak = std::f64::consts::SQRT_2 * 10f64.powf(expected_rms_level_db / 20.0);
+        let samples = (0..8192)
+            .map(|index| {
+                (peak * (2.0 * std::f64::consts::PI * frequency * index as f64 / sample_rate).cos())
+                    as f32
+            })
+            .collect::<Vec<_>>();
+        let measured = tone_rms_level_db(&samples, sample_rate, frequency).unwrap();
+        assert!((measured - expected_rms_level_db).abs() < 0.001);
+        assert!(tone_rms_level_db(&samples, 0.0, frequency).is_none());
     }
 
     #[test]

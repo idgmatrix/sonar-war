@@ -266,7 +266,10 @@ pub fn propagate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::merchant::{self, MerchantProfile};
+    use crate::offline::{power_spectrum, strongest_peak, tone_rms_level_db};
+    use crate::source::merchant::{
+        self, apply_tonal_overlay, MerchantProfile, MerchantTonalOverlay,
+    };
     use crate::source::source_spectrum;
 
     fn measured_psd_db(samples: &[f32], sample_rate: f32, frequency_hz: f32) -> f32 {
@@ -392,6 +395,127 @@ mod tests {
             high_loss > low_loss + 40.0,
             "low={low_loss} high={high_loss}"
         );
+    }
+
+    #[test]
+    fn measured_merchant_tones_match_source_and_1km_propagation_golden() {
+        const SAMPLE_RATE: f32 = 1024.0;
+        const DURATION_S: usize = 8;
+        const RANGE_M: f32 = 1000.0;
+        const PEAK_SEARCH_HALF_WIDTH_HZ: f64 = 0.75;
+
+        let golden =
+            include_str!("../../data/acoustics/golden/overseas_harriette_140rpm_tones_1km.csv")
+                .lines()
+                .filter(|line| {
+                    !line.is_empty() && !line.starts_with('#') && !line.starts_with("frequency_hz")
+                })
+                .map(|line| {
+                    let fields = line
+                        .split(',')
+                        .map(|field| field.parse::<f64>().expect("상선 톤 골든 숫자"))
+                        .collect::<Vec<_>>();
+                    assert_eq!(fields.len(), 6);
+                    fields
+                })
+                .collect::<Vec<_>>();
+        assert_eq!(golden.len(), 15);
+
+        let mut spectrum = merchant::source_spectrum(MerchantProfile::Bulker, 16.0, 172.9);
+        assert!(apply_tonal_overlay(
+            &mut spectrum,
+            MerchantTonalOverlay::OverseasHarriette140Rpm,
+            140.0,
+            4,
+        ));
+        // 측정 톤만 검증한다. JOMOPANS 광대역과 수신기 잡음은 별도 골든이 담당한다.
+        spectrum.broadband_bands.clear();
+        spectrum.broadband_level_db_re_1upa_at_1m = -300.0;
+
+        let propagated = propagate(
+            &spectrum,
+            PropagationGeometry {
+                bearing_deg: 0.0,
+                range_m: RANGE_M,
+                source_depth_m: 6.0,
+                receiver_depth_m: 6.0,
+                relative_velocity_ms: 0.0,
+            },
+            &[[0.0, 0.0, 0.0]],
+            1500.0,
+        );
+        let mut voice = SourceVoice::new(spectrum.clone(), SAMPLE_RATE, 4, 7);
+        let mut processor = PropagationProcessor::new(&spectrum, &propagated, SAMPLE_RATE, 4);
+        let mut frame = HydrophoneFrame::new(1);
+        let sample_count = SAMPLE_RATE as usize * DURATION_S;
+        let mut source_samples = Vec::with_capacity(sample_count);
+        let mut received_samples = Vec::with_capacity(sample_count);
+        for index in 0..sample_count {
+            let time_s = index as f64 / SAMPLE_RATE as f64;
+            let source_sample = voice.sample_at(time_s, 0.0);
+            source_samples.push(source_sample.tonal_pressure_1m_upa.iter().sum());
+            frame.clear();
+            processor.render_into(&voice, time_s, SAMPLE_RATE, &mut frame);
+            received_samples.push(frame.pressure_upa[0]);
+            voice.advance();
+            processor.advance_broadband(&voice);
+        }
+        let source_fft = power_spectrum(&source_samples, SAMPLE_RATE as f64);
+        let received_fft = power_spectrum(&received_samples, SAMPLE_RATE as f64);
+
+        for (index, fields) in golden.iter().enumerate() {
+            let frequency_hz = fields[0];
+            let source_level_db = fields[1];
+            let transmission_loss_db_golden = fields[2];
+            let received_level_db = fields[3];
+            let frequency_tolerance_hz = fields[4];
+            let level_tolerance_db = fields[5];
+            let source_line = spectrum.tonal_lines[index];
+            let received_line = propagated.tonal_lines[index];
+
+            assert!((source_line.frequency_hz as f64 - frequency_hz).abs() < 0.001);
+            assert!((source_line.level_db_re_1upa_at_1m as f64 - source_level_db).abs() < 0.001);
+            assert!(
+                (transmission_loss_db(RANGE_M, frequency_hz as f32 / 1000.0) as f64
+                    - transmission_loss_db_golden)
+                    .abs()
+                    < 0.0001
+            );
+            assert!((received_line.level_db_re_1upa as f64 - received_level_db).abs() < 0.001);
+
+            for (label, samples, fft, expected_level) in [
+                (
+                    "source",
+                    source_samples.as_slice(),
+                    &source_fft,
+                    source_level_db,
+                ),
+                (
+                    "received",
+                    received_samples.as_slice(),
+                    &received_fft,
+                    received_level_db,
+                ),
+            ] {
+                let peak = strongest_peak(
+                    fft,
+                    frequency_hz - PEAK_SEARCH_HALF_WIDTH_HZ,
+                    frequency_hz + PEAK_SEARCH_HALF_WIDTH_HZ,
+                )
+                .expect("골든 톤 피크");
+                let measured_level =
+                    tone_rms_level_db(samples, SAMPLE_RATE as f64, frequency_hz).unwrap();
+                assert!(
+                    (peak.frequency_hz - frequency_hz).abs() <= frequency_tolerance_hz,
+                    "{label} {frequency_hz:.3} Hz: peak={:.3}",
+                    peak.frequency_hz
+                );
+                assert!(
+                    (measured_level - expected_level).abs() <= level_tolerance_db,
+                    "{label} {frequency_hz:.3} Hz: measured={measured_level:.3} expected={expected_level:.3}"
+                );
+            }
+        }
     }
 
     #[test]
