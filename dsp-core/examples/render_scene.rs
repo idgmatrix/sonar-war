@@ -1,7 +1,10 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use dsp_core::offline::{measure_block, write_float_wav, write_summary_json, write_trace_csv};
+use dsp_core::offline::{
+    demon_spectrum, measure_block, power_spectrum, strongest_peak, write_float_wav,
+    write_summary_json, write_trace_csv, SpectralMetrics,
+};
 use dsp_core::{DspEngine, DspTraceSample};
 
 const DEFAULT_SAMPLE_RATE: u32 = 44_100;
@@ -104,9 +107,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     let trace_path = with_extension(&options.output_prefix, "trace.csv");
     let summary_path = with_extension(&options.output_prefix, "summary.json");
     let metrics = measure_block(&output);
+    let tonal = trace
+        .iter()
+        .map(|sample| sample.source_tonal_1m_upa)
+        .collect::<Vec<_>>();
+    let broadband = trace
+        .iter()
+        .map(|sample| sample.source_broadband_1m_upa)
+        .collect::<Vec<_>>();
+    let spectral = SpectralMetrics {
+        source_tonal_peak: strongest_peak(
+            &power_spectrum(&tonal, options.sample_rate as f64),
+            5.0,
+            20.0,
+        )
+        .ok_or("토널 검색 대역에 FFT 빈이 없습니다")?,
+        demon_peak: strongest_peak(
+            &demon_spectrum(&broadband, options.sample_rate as f64),
+            5.0,
+            20.0,
+        )
+        .ok_or("DEMON 검색 대역에 FFT 빈이 없습니다")?,
+    };
     write_float_wav(&wav_path, options.sample_rate, &output)?;
     write_trace_csv(&trace_path, &trace)?;
-    write_summary_json(&summary_path, options.sample_rate, metrics)?;
+    write_summary_json(&summary_path, options.sample_rate, metrics, spectral)?;
 
     println!("WAV: {}", wav_path.display());
     println!("trace: {}", trace_path.display());
@@ -118,6 +143,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         metrics.peak_abs_fs,
         metrics.zero_crossings,
         metrics.fnv1a64
+    );
+    println!(
+        "source_tonal_peak={:.3}Hz demon_peak={:.3}Hz",
+        spectral.source_tonal_peak.frequency_hz, spectral.demon_peak.frequency_hz
     );
     Ok(())
 }

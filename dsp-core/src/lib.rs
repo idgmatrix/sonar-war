@@ -92,11 +92,13 @@ struct Target {
 
 /// 네이티브 오프라인 검증에서 한 샘플의 계층 경계를 기록한 값.
 ///
-/// `source_1m_upa`는 수신기 시각에 각 Source가 방사한 원시 음압의 합,
+/// `source_*_1m_upa`는 수신기 시각에 각 Source가 방사한 원시 음압의 합,
 /// `hydrophone_0_upa`는 전파 후 첫 하이드로폰 음압이다. 두 FS 값은 출력 제한 전/후다.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DspTraceSample {
     pub source_1m_upa: f32,
+    pub source_tonal_1m_upa: f32,
+    pub source_broadband_1m_upa: f32,
     pub hydrophone_0_upa: f32,
     pub receiver_fs: f32,
     pub output_fs: f32,
@@ -242,12 +244,13 @@ impl DspEngine {
         let t = self.t;
         self.hydrophone_frame.clear();
 
-        let mut source_1m_upa = 0.0;
+        let mut source_tonal_1m_upa = 0.0;
+        let mut source_broadband_1m_upa = 0.0;
         for target in &mut self.targets {
             if TRACE {
                 let source = target.source.sample_at(t, 0.0);
-                source_1m_upa += source.tonal_pressure_1m_upa.iter().sum::<f32>()
-                    + source.broadband_pressure_1m_upa;
+                source_tonal_1m_upa += source.tonal_pressure_1m_upa.iter().sum::<f32>();
+                source_broadband_1m_upa += source.broadband_pressure_1m_upa;
             }
             target.propagation.render_into(
                 &target.source,
@@ -262,7 +265,9 @@ impl DspEngine {
             let trace = trace
                 .as_deref_mut()
                 .expect("TRACE=true requires a trace sample");
-            trace.source_1m_upa = source_1m_upa;
+            trace.source_tonal_1m_upa = source_tonal_1m_upa;
+            trace.source_broadband_1m_upa = source_broadband_1m_upa;
+            trace.source_1m_upa = source_tonal_1m_upa + source_broadband_1m_upa;
             trace.hydrophone_0_upa = self
                 .hydrophone_frame
                 .pressure_upa

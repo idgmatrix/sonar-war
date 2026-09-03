@@ -1,2 +1,2 @@
-sample_rate_hz,warmup_seconds,duration_seconds,rms_fs,rms_tolerance,peak_abs_fs,peak_tolerance,zero_crossings,zero_crossing_tolerance
-44100,0.25,1.0,0.076694,0.000100,0.313274,0.001000,4488,5
+sample_rate_hz,warmup_seconds,duration_seconds,rms_fs,rms_tolerance,peak_abs_fs,peak_tolerance,zero_crossings,zero_crossing_tolerance,source_tonal_peak_hz,source_tonal_peak_tolerance_hz,demon_peak_hz,demon_peak_tolerance_hz
+44100,0.25,1.0,0.076694,0.000100,0.313274,0.001000,4488,5,9.997,0.050,9.997,0.100

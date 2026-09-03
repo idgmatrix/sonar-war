@@ -52,11 +52,11 @@
 누산·dBFS 변환·윈도우 초기화를 소유한다. `output::soft_limit`는 주 조향 빔에만 적용되므로
 분석 입력을 변조하지 않는다. `DspEngine`은 두 경로의 실행 순서와 WASM 계약만 조율한다.
 
-네이티브 전용 `process_traced`는 같은 내부 샘플 함수를 호출하면서 Source 1 m 음압,
-첫 하이드로폰 음압, 제한 전 수신기 FS, 최종 출력 FS를 기록한다. `dsp:render`는 이를
-float32 WAV·CSV·요약 JSON으로 저장하며 기준 장면 블록 통계를 골든 테스트로 비교한다.
+네이티브 전용 `process_traced`는 같은 내부 샘플 함수를 호출하면서 Source 1 m의 전체·
+토널·광대역 음압, 첫 하이드로폰 음압, 제한 전 수신기 FS, 최종 출력 FS를 기록한다.
+`dsp:render`는 이를 float32 WAV·CSV·요약 JSON으로 저장하며 기준 장면 블록 통계와
+Source 토널·DEMON 피크 주파수를 골든 테스트로 비교한다.
 세부 규약은 `docs/오프라인 DSP 검증.md`를 따른다.
 
-다음 단계에서는 trace에 FFT/PSD와 DEMON 포락선 분석을 적용해 톤 주파수·레벨, 변조율,
-대역 에너지와 채널 응답을 문헌 기반 허용 오차와 비교한다. AudioWorklet의
+다음 단계에서는 톤 레벨, 대역 에너지와 채널 응답을 문헌 기반 허용 오차와 비교한다. AudioWorklet의
 `DspEngine::process()` 블록당 1회 호출 규약은 계속 유지한다.
