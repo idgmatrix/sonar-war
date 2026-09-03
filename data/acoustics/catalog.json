@@ -1,0 +1,328 @@
+{
+  "$schema": "./schema/catalog.schema.json",
+  "schema_version": "1.0.0",
+  "level_convention": {
+    "source_level": "dB re 1 µPa @ 1 m",
+    "spectral_density": "dB re 1 µPa²/Hz",
+    "full_scale": "200 µPa = 1.0 FS"
+  },
+  "layer_contract": {
+    "source_includes": [
+      "emission_at_reference_distance",
+      "source_directivity",
+      "operating_state_modulation"
+    ],
+    "source_excludes": [
+      "transmission_loss",
+      "doppler",
+      "surface_bottom_multipath",
+      "receiver_array_response"
+    ]
+  },
+  "references": [
+    {
+      "id": "iso-17208-1-2016",
+      "title": "ISO 17208-1:2016 — Underwater acoustics: precision measurements of underwater sound from ships",
+      "kind": "standard",
+      "url": "https://www.iso.org/standard/62408.html",
+      "accessed_on": "2026-09-03",
+      "notes": "운항 조건을 고정하고 원거리 RMS 음압을 1 m로 정규화한 1/3옥타브 radiated noise level 비교 절차. 잠수함에는 적용되지 않는다."
+    },
+    {
+      "id": "wenz-1962",
+      "title": "Acoustic Ambient Noise in the Ocean: Spectra and Sources",
+      "kind": "peer_reviewed",
+      "url": "https://doi.org/10.1121/1.1909155",
+      "doi": "10.1121/1.1909155",
+      "accessed_on": "2026-09-03",
+      "notes": "1 Hz–20 kHz 주변 소음을 난류, 해상 교통, 바람 의존 표면 소음 등으로 분해한 기준 문헌."
+    },
+    {
+      "id": "mckenna-2012",
+      "title": "Underwater radiated noise from modern commercial ships",
+      "kind": "peer_reviewed",
+      "url": "https://doi.org/10.1121/1.3664100",
+      "doi": "10.1121/1.3664100",
+      "accessed_on": "2026-09-03",
+      "notes": "AIS와 교정 녹음을 결합한 1 kHz 이하 상선 측정. 선종·속력·방향에 따른 큰 변동을 보고한다."
+    },
+    {
+      "id": "boem-sound-source-list-2023",
+      "title": "BOEM Sound Source List — Vessels",
+      "kind": "government",
+      "url": "https://www.boem.gov/environment/center-marine-acoustics/sound-source-list",
+      "accessed_on": "2026-09-03",
+      "notes": "선박 소음을 캐비테이션, 기계류, 유동 성분으로 분류하고 선박 크기별 일반 대역·준위 범위를 요약한다."
+    },
+    {
+      "id": "dosits-shipping-noise",
+      "title": "Discovery of Sound in the Sea — How does shipping affect ocean sound levels?",
+      "kind": "educational",
+      "url": "https://dosits.org/science/sounds-in-the-sea/how-does-shipping-affect-ocean-sound-levels/",
+      "accessed_on": "2026-09-03",
+      "notes": "선박 소음의 주요 메커니즘과 20–500 Hz 저주파 우세를 설명하는 보조 자료."
+    }
+  ],
+  "sources": [
+    {
+      "id": "large-merchant-vessel",
+      "label_ko": "대형 상선·컨테이너선",
+      "category": "vessel",
+      "priority": "P0",
+      "status": "parameter_baseline",
+      "confidence": "B",
+      "components": [
+        {
+          "id": "propeller_blade_tonals",
+          "family": "tonal",
+          "mechanism": "축 회전과 프로펠러 블레이드 통과율 및 고조파",
+          "parameters": [
+            {
+              "id": "dominant_tonal_band_hz",
+              "value": { "min": 5, "max": 100 },
+              "unit": "Hz",
+              "reference_conditions": "길이 100 m 이상 대형 선박의 일반 저주파 성분; 실제 선박은 RPM과 블레이드 수로 계산",
+              "confidence": "B",
+              "uncertainty": "선종·추진계·속력별 편차가 크며 개별 선박 식별값으로 사용 불가",
+              "evidence_refs": ["boem-sound-source-list-2023", "mckenna-2012"]
+            }
+          ]
+        },
+        {
+          "id": "propeller_cavitation",
+          "family": "broadband",
+          "mechanism": "프로펠러 캐비테이션 기포 생성과 붕괴",
+          "parameters": [
+            {
+              "id": "documented_energy_band_hz",
+              "value": { "min": 20, "max": 1000 },
+              "unit": "Hz",
+              "reference_conditions": "상선 측정과 비교에 우선 사용할 핵심 대역; 캐비테이션 에너지는 더 높은 주파수까지 연장 가능",
+              "confidence": "B",
+              "uncertainty": "측정 대역 제한 때문에 전체 캐비테이션 상한으로 해석하지 않음",
+              "evidence_refs": ["mckenna-2012", "dosits-shipping-noise"]
+            },
+            {
+              "id": "broadband_source_level_db",
+              "value": { "min": 177, "max": 188 },
+              "unit": "dB re 1 µPa @ 1 m",
+              "reference_conditions": "McKenna et al.의 정상 운항 현대 상선, 20–1000 Hz 추정 광대역 소스 레벨",
+              "confidence": "B",
+              "uncertainty": "표본 선박 범위이며 보편적 최소·최대가 아니다. 선종·속력·방향과 전파 보정에 의존",
+              "evidence_refs": ["mckenna-2012"]
+            }
+          ]
+        },
+        {
+          "id": "machinery_and_flow",
+          "family": "broadband",
+          "mechanism": "엔진·감속기·펌프의 선체 전달음과 선체 유동 소음",
+          "parameters": []
+        }
+      ],
+      "evidence_refs": ["iso-17208-1-2016", "mckenna-2012", "boem-sound-source-list-2023"],
+      "limitations": [
+        "177–188 dB 범위를 모든 상선에 무작위 적용하지 않는다.",
+        "방향성, 흘수, 속력, 적재 상태를 별도 조건으로 모델링해야 한다.",
+        "ISO radiated noise level과 자유장 monopole source level을 같은 양으로 취급하지 않는다."
+      ]
+    },
+    {
+      "id": "submarine-generic",
+      "label_ko": "잠수함 추진·기계 소음",
+      "category": "vessel",
+      "priority": "P0",
+      "status": "research_required",
+      "confidence": "C",
+      "components": [
+        {
+          "id": "propulsor_tonals",
+          "family": "tonal",
+          "mechanism": "축/추진기 회전과 블레이드 통과 성분",
+          "parameters": []
+        },
+        {
+          "id": "onboard_machinery",
+          "family": "tonal",
+          "mechanism": "모터·펌프·터빈·감속기 진동의 선체 전달",
+          "parameters": []
+        },
+        {
+          "id": "submarine_cavitation",
+          "family": "modulated",
+          "mechanism": "운항 상태에 따른 추진기 캐비테이션과 블레이드율 포락선 변조",
+          "parameters": []
+        }
+      ],
+      "evidence_refs": [],
+      "limitations": [
+        "실제 군용 잠수함 서명은 공개 고신뢰 자료가 부족하므로 현재 숫자를 사실값으로 간주하지 않는다.",
+        "공개 민간 추진기·기계 유사체와 기본 물리식으로 범위를 구성하고 C등급임을 UI/데이터에 유지한다."
+      ]
+    },
+    {
+      "id": "torpedo-generic",
+      "label_ko": "어뢰 추진·캐비테이션 소음",
+      "category": "tactical",
+      "priority": "P0",
+      "status": "research_required",
+      "confidence": "C",
+      "components": [
+        {
+          "id": "torpedo_propulsion",
+          "family": "tonal",
+          "mechanism": "모터/기관과 펌프제트 또는 프로펠러 회전 성분",
+          "parameters": []
+        },
+        {
+          "id": "torpedo_cavitation",
+          "family": "modulated",
+          "mechanism": "고속 추진기의 광대역 캐비테이션과 회전율 변조",
+          "parameters": []
+        }
+      ],
+      "evidence_refs": [],
+      "limitations": [
+        "무기별 공개 음향 서명 부재. 특정 실물 어뢰를 재현한다고 주장하지 않는다.",
+        "속력·추진 방식·수심에 따른 상대 변화부터 검증하고 절대 준위는 C등급으로 유지한다."
+      ]
+    },
+    {
+      "id": "ocean-surface-ambient",
+      "label_ko": "바람·파랑·원거리 선박 주변 소음",
+      "category": "ambient",
+      "priority": "P0",
+      "status": "parameter_baseline",
+      "confidence": "B",
+      "components": [
+        {
+          "id": "wind_wave_noise",
+          "family": "broadband",
+          "mechanism": "표면 파랑·쇄파·기포에 의한 바람 의존 소음",
+          "parameters": [
+            {
+              "id": "wind_dominant_band_hz",
+              "value": { "min": 50, "max": 20000 },
+              "unit": "Hz",
+              "reference_conditions": "Wenz가 분류한 전형적 바람 의존 주변 소음 영역",
+              "confidence": "B",
+              "uncertainty": "해역·수심·계절·파랑 발달 상태에 따라 스펙트럼이 크게 변동",
+              "evidence_refs": ["wenz-1962"]
+            }
+          ]
+        },
+        {
+          "id": "distant_shipping",
+          "family": "broadband",
+          "mechanism": "다수의 원거리 선박이 만드는 저주파 주변 소음장",
+          "parameters": [
+            {
+              "id": "shipping_ambient_band_hz",
+              "value": { "min": 10, "max": 1000 },
+              "unit": "Hz",
+              "reference_conditions": "Wenz의 해상 교통 영향 주파수 영역",
+              "confidence": "B",
+              "uncertainty": "선박 밀도와 전파 환경에 따라 시공간 변동",
+              "evidence_refs": ["wenz-1962"]
+            }
+          ]
+        }
+      ],
+      "evidence_refs": ["wenz-1962"],
+      "limitations": [
+        "Wenz 곡선은 범위형 경험 기준이며 특정 시각·위치의 정답 스펙트럼이 아니다.",
+        "현재 Knudsen 구현의 식과 합성 필터는 별도의 출처·곡선 회귀 검증이 필요하다."
+      ]
+    },
+    {
+      "id": "active-sonar-ping",
+      "label_ko": "능동 소나 핑",
+      "category": "tactical",
+      "priority": "P1",
+      "status": "inventory",
+      "confidence": "C",
+      "components": [
+        {
+          "id": "active_waveform",
+          "family": "transient",
+          "mechanism": "CW/LFM/HFM 송신 파형과 송신기 포락선",
+          "parameters": []
+        }
+      ],
+      "evidence_refs": [],
+      "limitations": ["송신 파형과 해양 채널의 반향을 분리 구현해야 한다."]
+    },
+    {
+      "id": "acoustic-decoy",
+      "label_ko": "음향 기만기",
+      "category": "tactical",
+      "priority": "P1",
+      "status": "inventory",
+      "confidence": "C",
+      "components": [
+        {
+          "id": "decoy_emission",
+          "family": "modulated",
+          "mechanism": "광대역 방사 또는 표적 모사 반복/변조 신호",
+          "parameters": []
+        }
+      ],
+      "evidence_refs": [],
+      "limitations": ["특정 군용 기만기의 비공개 성능을 추정하지 않고 게임 기능 수준의 일반 모델로 한정한다."]
+    },
+    {
+      "id": "rain-surface-noise",
+      "label_ko": "강우 표면 소음",
+      "category": "natural",
+      "priority": "P1",
+      "status": "research_required",
+      "confidence": "C",
+      "components": [
+        {
+          "id": "droplet_and_bubble_noise",
+          "family": "broadband",
+          "mechanism": "빗방울 충격과 수면 아래 기포 진동",
+          "parameters": []
+        }
+      ],
+      "evidence_refs": ["wenz-1962"],
+      "limitations": ["현재 rain_noise_level_db 식은 단조성만 보장한 C등급 게임 근사이며 교체 대상이다."]
+    },
+    {
+      "id": "marine-biological-chorus",
+      "label_ko": "해양 생물 개체·군집음",
+      "category": "biological",
+      "priority": "P2",
+      "status": "inventory",
+      "confidence": "C",
+      "components": [
+        {
+          "id": "biological_calls_clicks_chorus",
+          "family": "transient",
+          "mechanism": "고래류 발성, 돌고래 클릭, 어류·갑각류 반복음과 군집 소음",
+          "parameters": []
+        }
+      ],
+      "evidence_refs": [],
+      "limitations": ["종·행동·지역별 프로파일과 녹음 라이선스 조사가 필요하다."]
+    },
+    {
+      "id": "industrial-impulsive",
+      "label_ko": "해양 산업 충격·연속음",
+      "category": "industrial",
+      "priority": "P2",
+      "status": "inventory",
+      "confidence": "C",
+      "components": [
+        {
+          "id": "piling_drilling_dredging",
+          "family": "impulsive",
+          "mechanism": "파일 항타 충격, 시추·준설 장비의 반복 및 연속 방사",
+          "parameters": []
+        }
+      ],
+      "evidence_refs": [],
+      "limitations": ["장비 종류와 작업 모드별 공개 측정 프로파일 조사가 필요하다."]
+    }
+  ]
+}

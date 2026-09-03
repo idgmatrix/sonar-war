@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idgmatrix.github.io/sonar-war/schema/acoustic-catalog.schema.json",
+  "title": "SSN-X 수중 음향 소스 카탈로그",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "level_convention",
+    "layer_contract",
+    "references",
+    "sources"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "level_convention": {
+      "type": "object",
+      "required": ["source_level", "spectral_density", "full_scale"],
+      "properties": {
+        "source_level": { "const": "dB re 1 µPa @ 1 m" },
+        "spectral_density": { "const": "dB re 1 µPa²/Hz" },
+        "full_scale": { "const": "200 µPa = 1.0 FS" }
+      },
+      "additionalProperties": false
+    },
+    "layer_contract": {
+      "type": "object",
+      "required": ["source_includes", "source_excludes"],
+      "properties": {
+        "source_includes": {
+          "type": "array",
+          "contains": { "const": "emission_at_reference_distance" }
+        },
+        "source_excludes": {
+          "type": "array",
+          "allOf": [
+            { "contains": { "const": "transmission_loss" } },
+            { "contains": { "const": "doppler" } },
+            { "contains": { "const": "receiver_array_response" } }
+          ]
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reference" }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/source" }
+    }
+  },
+  "$defs": {
+    "confidence": {
+      "type": "string",
+      "enum": ["A", "B", "C"]
+    },
+    "reference": {
+      "type": "object",
+      "required": ["id", "title", "kind", "url", "accessed_on"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$" },
+        "title": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["standard", "peer_reviewed", "government", "educational"]
+        },
+        "url": { "type": "string", "format": "uri" },
+        "doi": { "type": "string" },
+        "accessed_on": { "type": "string", "format": "date" },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "parameter": {
+      "type": "object",
+      "required": [
+        "id",
+        "value",
+        "unit",
+        "reference_conditions",
+        "confidence",
+        "uncertainty",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
+        "value": {
+          "oneOf": [
+            { "type": "number" },
+            {
+              "type": "object",
+              "required": ["min", "max"],
+              "properties": {
+                "min": { "type": "number" },
+                "max": { "type": "number" }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "unit": { "type": "string", "minLength": 1 },
+        "reference_conditions": { "type": "string", "minLength": 1 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "uncertainty": { "type": "string", "minLength": 1 },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "required": ["id", "family", "mechanism", "parameters"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
+        "family": {
+          "type": "string",
+          "enum": ["tonal", "broadband", "modulated", "transient", "impulsive"]
+        },
+        "mechanism": { "type": "string", "minLength": 1 },
+        "parameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/parameter" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "id",
+        "label_ko",
+        "category",
+        "priority",
+        "status",
+        "confidence",
+        "components",
+        "evidence_refs",
+        "limitations"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$" },
+        "label_ko": { "type": "string", "minLength": 1 },
+        "category": {
+          "type": "string",
+          "enum": ["vessel", "tactical", "ambient", "natural", "biological", "industrial"]
+        },
+        "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+        "status": {
+          "type": "string",
+          "enum": ["inventory", "research_required", "parameter_baseline", "implemented", "validated"]
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/component" }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

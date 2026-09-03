@@ -12,6 +12,7 @@ dsp-core/target/
 
 # 도구 / 로컬 설정
 .playwright-mcp/
+graphify-out/
 .claude/settings.local.json
 
 # OS / 편집기
