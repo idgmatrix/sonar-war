@@ -15,6 +15,7 @@ import { createDemoWorld, World } from './core/sim/world.ts';
 import workletUrl from './dsp/worklets/sonarWorklet.ts?worker&url';
 import { BassDisplay, LofarDisplay } from './render/displays/sonarDisplays.ts';
 import wasmUrl from '../dsp-core/pkg/dsp_core_bg.wasm?url';
+import { encodeProfiledTargets, type ProfiledTarget } from './dsp/sourceProfiles.ts';
 
 const tickEl = document.getElementById('tick')!;
 const timeEl = document.getElementById('time')!;
@@ -52,9 +53,14 @@ const loop = new TickLoop(
 );
 
 // --- 씬 프리셋 (표적당 8 float: bearing, range, depth, rpm, blades, tonal_db, cavitation, rel_vel) ---
-const SCENES: Record<string, { label: string; data: number[] }> = {
+type Scene =
+  | { label: string; kind: 'legacy'; data: number[] }
+  | { label: string; kind: 'profiled'; targets: ProfiledTarget[] };
+
+const SCENES: Record<string, Scene> = {
   demo: {
     label: 'DEMO · 3 targets',
+    kind: 'legacy',
     data: [
       45, 3000, 50, 90, 5, 150, 0.3, 5,
       300, 8000, 200, 70, 4, 145, 0.1, -3,
@@ -63,19 +69,38 @@ const SCENES: Record<string, { label: string; data: number[] }> = {
   },
   approach: {
     label: 'APPROACH · Doppler +',
+    kind: 'legacy',
     data: [0, 2000, 40, 120, 6, 150, 0.4, 8],
   },
   recede: {
     label: 'RECEDING · Doppler −',
+    kind: 'legacy',
     data: [0, 2000, 40, 120, 6, 150, 0.4, -8],
   },
   rpmUp: {
     label: 'RPM 180 · high',
+    kind: 'legacy',
     data: [0, 1500, 40, 180, 6, 152, 0.5, 0],
   },
   rpmDown: {
     label: 'RPM 60 · low',
+    kind: 'legacy',
     data: [0, 1500, 40, 60, 6, 152, 0.5, 0],
+  },
+  merchant: {
+    label: 'MERCHANT · JOMOPANS bulker',
+    kind: 'profiled',
+    targets: [
+      {
+        bearingDeg: 45,
+        rangeM: 3000,
+        depthM: 6,
+        sourceProfileId: 'merchant-bulker-jomopans-echo',
+        speedKn: 13.5,
+        lengthM: 211,
+        relativeVelocityMs: 2,
+      },
+    ],
   },
 };
 
@@ -107,7 +132,11 @@ function rmsToDb(rms: number): string {
 function sendScene(key: string): void {
   const scene = SCENES[key];
   if (!node || !scene) return;
-  node.port.postMessage({ type: 'scene', targets: new Float32Array(scene.data) });
+  const message =
+    scene.kind === 'legacy'
+      ? { type: 'scene', targets: new Float32Array(scene.data) }
+      : { type: 'profiledScene', targets: encodeProfiledTargets(scene.targets) };
+  node.port.postMessage(message);
   sceneEl.textContent = scene.label;
   setTimeout(() => {
     console.log(`[main] scene RMS ${key} = ${rmsToDb(measureRms())}`);

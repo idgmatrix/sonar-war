@@ -10,6 +10,8 @@
 
 use std::f32::consts::PI;
 
+pub mod merchant;
+
 /// 합성하는 토널 고조파 수.
 pub const TONAL_HARMONICS: u32 = 5;
 
@@ -20,12 +22,21 @@ pub struct SourceLine {
     pub level_db_re_1upa_at_1m: f32,
 }
 
+/// 대역 제한 광대역 성분. 준위는 1 Hz 대역폭당 소스 스펙트럼 준위다.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceBand {
+    pub center_hz: f32,
+    pub spectrum_level_db_re_1upa2_per_hz_at_1m: f32,
+}
+
 /// 한 표적의 원시 방사 스펙트럼 제어 프레임.
 ///
 /// 단위는 소스 고유의 `dB re 1 µPa @ 1 m`이며 거리, 도플러, 배열 응답을 포함하지 않는다.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceSpectrum {
     pub tonal_lines: [SourceLine; TONAL_HARMONICS as usize],
+    /// 비어 있으면 기존 전대역 백색잡음 경로를 사용한다.
+    pub broadband_bands: Vec<SourceBand>,
     pub broadband_level_db_re_1upa_at_1m: f32,
     pub modulation_rate_hz: f32,
 }
@@ -43,22 +54,101 @@ pub struct SourceVoice {
     spectrum: SourceSpectrum,
     tonal_amplitude_1m_upa: [f32; TONAL_HARMONICS as usize],
     broadband_amplitude_1m_upa: f32,
+    broadband_bands: Vec<SourceNoiseBand>,
     noise_history: Vec<f32>,
     noise_position: usize,
     rng: u64,
 }
 
+/// 4차 1/3옥타브 band-pass. Source 내부에서만 상태를 소유한다.
+#[derive(Debug, Clone)]
+struct SourceNoiseBand {
+    b0: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    z1: f32,
+    z2: f32,
+    z3: f32,
+    z4: f32,
+    amplitude_upa: f32,
+    rng: u64,
+}
+
+impl SourceNoiseBand {
+    fn new(sample_rate: f32, band: SourceBand, seed: u64) -> Self {
+        const THIRD_OCTAVE_Q: f32 = 4.318_473;
+        let omega = 2.0 * PI * band.center_hz / sample_rate;
+        let alpha = omega.sin() / (2.0 * THIRD_OCTAVE_Q);
+        let a0 = 1.0 + alpha;
+        let target_psd_upa2 = 10f32.powf(band.spectrum_level_db_re_1upa2_per_hz_at_1m / 10.0);
+        // white[-1,1]의 one-sided PSD가 2/(3fs)이므로 중심 이득 1로 교정한다.
+        let amplitude_upa = (target_psd_upa2 * sample_rate * 1.5).sqrt();
+        Self {
+            b0: alpha / a0,
+            b2: -alpha / a0,
+            a1: -2.0 * omega.cos() / a0,
+            a2: (1.0 - alpha) / a0,
+            z1: 0.0,
+            z2: 0.0,
+            z3: 0.0,
+            z4: 0.0,
+            amplitude_upa,
+            rng: seed,
+        }
+    }
+
+    #[inline]
+    fn next(&mut self) -> f32 {
+        let mut x = self.rng;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng = x;
+        let white = ((x >> 40) as f32 / 16_777_216.0) * 2.0 - 1.0;
+        let input = white * self.amplitude_upa;
+        let first = self.b0 * input + self.z1;
+        self.z1 = -self.a1 * first + self.z2;
+        self.z2 = self.b2 * input - self.a2 * first;
+        let second = self.b0 * first + self.z3;
+        self.z3 = -self.a1 * second + self.z4;
+        self.z4 = self.b2 * first - self.a2 * second;
+        second
+    }
+}
+
 impl SourceVoice {
-    pub fn new(spectrum: SourceSpectrum, history_samples: usize, seed: u64) -> Self {
+    pub fn new(
+        spectrum: SourceSpectrum,
+        sample_rate: f32,
+        history_samples: usize,
+        seed: u64,
+    ) -> Self {
         let tonal_amplitude_1m_upa = std::array::from_fn(|index| {
             10f32.powf(spectrum.tonal_lines[index].level_db_re_1upa_at_1m / 20.0)
         });
         let broadband_amplitude_1m_upa =
             10f32.powf(spectrum.broadband_level_db_re_1upa_at_1m / 20.0);
+        let nyquist_guard = sample_rate * 0.45;
+        let broadband_bands = spectrum
+            .broadband_bands
+            .iter()
+            .copied()
+            .filter(|band| band.center_hz < nyquist_guard)
+            .enumerate()
+            .map(|(index, band)| {
+                SourceNoiseBand::new(
+                    sample_rate,
+                    band,
+                    seed ^ (index as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03),
+                )
+            })
+            .collect();
         Self {
             spectrum,
             tonal_amplitude_1m_upa,
             broadband_amplitude_1m_upa,
+            broadband_bands,
             noise_history: vec![0.0; history_samples.max(2)],
             noise_position: 0,
             rng: seed,
@@ -82,9 +172,7 @@ impl SourceVoice {
             demon_envelope((self.spectrum.modulation_rate_hz as f64 * source_time_s) as f32);
         SourceSample {
             tonal_pressure_1m_upa,
-            broadband_pressure_1m_upa: self.broadband_amplitude_1m_upa
-                * self.read_noise(broadband_history_offset)
-                * envelope,
+            broadband_pressure_1m_upa: self.read_noise(broadband_history_offset) * envelope,
         }
     }
 
@@ -96,7 +184,14 @@ impl SourceVoice {
         x ^= x << 17;
         self.rng = x;
         let white = ((x >> 11) as f32 / 9_007_199_254_740_992.0) * 2.0 - 1.0;
-        self.noise_history[self.noise_position] = white;
+        self.noise_history[self.noise_position] = if self.broadband_bands.is_empty() {
+            white * self.broadband_amplitude_1m_upa
+        } else {
+            self.broadband_bands
+                .iter_mut()
+                .map(SourceNoiseBand::next)
+                .sum()
+        };
         self.noise_position = (self.noise_position + 1) % self.noise_history.len();
     }
 
@@ -133,6 +228,7 @@ pub fn source_spectrum(
     });
     SourceSpectrum {
         tonal_lines,
+        broadband_bands: Vec::new(),
         broadband_level_db_re_1upa_at_1m: broadband_level_db(rpm, cavitation),
         modulation_rate_hz: blade_rate,
     }
@@ -220,8 +316,8 @@ mod tests {
     #[test]
     fn source_voice_is_deterministic_and_uses_source_level_units() {
         let spectrum = source_spectrum(120.0, 5, 120.0, 0.4);
-        let mut first = SourceVoice::new(spectrum.clone(), 32, 7);
-        let mut second = SourceVoice::new(spectrum, 32, 7);
+        let mut first = SourceVoice::new(spectrum.clone(), 44_100.0, 32, 7);
+        let mut second = SourceVoice::new(spectrum, 44_100.0, 32, 7);
         for index in 0..64 {
             assert_eq!(
                 first.sample_at(index as f64 / 44100.0, 0.0),

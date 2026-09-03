@@ -8,6 +8,9 @@ describe('AcousticEntity 직렬화 (M0 완료 기준)', () => {
     a.velocity = [2.5, -0.3, 1.1];
     a.heading = 1.5708;
     a.rpm = 142;
+    a.sourceProfileId = 'merchant-bulker-jomopans-echo';
+    a.lengthM = 211;
+    a.setBladeCount(5);
     a.cavitation = 0.67;
     a.tonals = [50, 100, 150, 200];
     a.bladeRate = 16.5;
@@ -23,6 +26,9 @@ describe('AcousticEntity 직렬화 (M0 완료 기준)', () => {
     expect(b.velocity).toEqual(a.velocity);
     expect(b.heading).toBeCloseTo(a.heading);
     expect(b.rpm).toBe(a.rpm);
+    expect(b.sourceProfileId).toBe(a.sourceProfileId);
+    expect(b.lengthM).toBe(a.lengthM);
+    expect(b.bladeCount).toBe(a.bladeCount);
     expect(b.cavitation).toBeCloseTo(a.cavitation);
     expect(b.tonals).toEqual(a.tonals);
     expect(b.bladeRate).toBeCloseTo(a.bladeRate);

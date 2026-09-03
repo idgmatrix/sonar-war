@@ -75,11 +75,13 @@ pub struct PropagationProcessor {
 impl PropagationProcessor {
     pub fn new(source: &SourceSpectrum, propagated: &PropagatedSpectrum) -> Self {
         let tonal_linear_loss = std::array::from_fn(|index| {
-            10f32.powf(
-                (propagated.tonal_lines[index].level_db_re_1upa
-                    - source.tonal_lines[index].level_db_re_1upa_at_1m)
-                    / 20.0,
-            )
+            let source_level = source.tonal_lines[index].level_db_re_1upa_at_1m;
+            let received_level = propagated.tonal_lines[index].level_db_re_1upa;
+            if source_level.is_finite() && received_level.is_finite() {
+                10f32.powf((received_level - source_level) / 20.0)
+            } else {
+                0.0
+            }
         });
         let broadband_linear_loss = 10f32.powf(
             (propagated.broadband_level_db_re_1upa - source.broadband_level_db_re_1upa_at_1m)
@@ -254,7 +256,7 @@ mod tests {
             1500.0,
         );
         let processor = PropagationProcessor::new(&spectrum, &propagated);
-        let source = SourceVoice::new(spectrum, 4, 7);
+        let source = SourceVoice::new(spectrum, 44_100.0, 4, 7);
         let mut frame = HydrophoneFrame::new(1);
         processor.render_into(&source, 0.0, 44100.0, &mut frame);
         assert!(frame.pressure_upa[0] > 1_000_000.0);
