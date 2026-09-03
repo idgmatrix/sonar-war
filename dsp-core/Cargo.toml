@@ -1,0 +1,17 @@
+[package]
+name = "dsp-core"
+version = "0.1.0"
+edition = "2021"
+description = "SSN-X Sonar Simulator — Rust/WASM DSP core (realistic underwater acoustic synthesis)"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

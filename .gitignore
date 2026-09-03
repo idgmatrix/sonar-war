@@ -1,0 +1,19 @@
+# 의존성
+node_modules/
+
+# 프론트엔드 빌드 산출물
+dist/
+tsconfig.tsbuildinfo
+
+# Rust / WASM 빌드 캐시
+dsp-core/target/
+# dsp-core/pkg/는 wasm-pack이 생성한 dsp-core/pkg/.gitignore(`*`)로 이미 무시됨.
+# 재생성: npm run wasm:build
+
+# 도구 / 로컬 설정
+.playwright-mcp/
+.claude/settings.local.json
+
+# OS / 편집기
+.DS_Store
+Thumbs.db

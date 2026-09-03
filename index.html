@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SSN-X Sonar Simulator</title>
+    <link rel="stylesheet" href="/src/ui/theme.css" />
+  </head>
+  <body class="theme-p31-green">
+    <div id="app">
+      <header class="panel">
+        <h1>SSN-X BLACKTIDE — SONAR SIMULATOR</h1>
+        <p class="sub">M0 SCAFFOLDING · Rust/WASM DSP CORE</p>
+      </header>
+
+      <main class="panel grid">
+        <section class="readout">
+          <div class="label">SIM TICK (10Hz)</div>
+          <div class="value" id="tick">0</div>
+        </section>
+        <section class="readout">
+          <div class="label">MISSION TIME</div>
+          <div class="value" id="time">0.0s</div>
+        </section>
+        <section class="readout">
+          <div class="label">ACOUSTIC ENTITIES</div>
+          <div class="value" id="entities">0</div>
+        </section>
+        <section class="readout">
+          <div class="label">AUDIO DSP</div>
+          <div class="value small" id="audio-status">STANDBY</div>
+        </section>
+      </main>
+
+      <footer class="panel">
+        <button id="start" class="btn">▶ START OPERATION</button>
+        <span class="hint">클릭 시 오디오 컨텍스트 + WASM DSP 시작</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
