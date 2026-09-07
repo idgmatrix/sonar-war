@@ -22,6 +22,7 @@ pub mod output;
 pub mod physics;
 pub mod propagation;
 pub mod receiver;
+mod ring;
 pub mod source;
 
 use wasm_bindgen::prelude::*;
@@ -115,6 +116,7 @@ impl Target {
         sample_rate: f32,
         hydrophones: &[[f32; 3]],
         max_delay_samples: usize,
+        receiver_depth_m: f32,
     ) -> Self {
         let source = source_spectrum(
             descriptor.rpm,
@@ -128,8 +130,7 @@ impl Target {
                 bearing_deg: descriptor.bearing_deg,
                 range_m: descriptor.range_m,
                 source_depth_m: descriptor.depth_m,
-                // 기존 8-float WASM 계약에는 자함 수심이 없어 원점을 유지한다.
-                receiver_depth_m: 0.0,
+                receiver_depth_m,
                 relative_velocity_ms: descriptor.relative_velocity_ms,
             },
             hydrophones,
@@ -153,6 +154,7 @@ impl Target {
         sample_rate: f32,
         hydrophones: &[[f32; 3]],
         max_delay_samples: usize,
+        receiver_depth_m: f32,
     ) -> Option<Self> {
         if values.len() < PROFILED_TARGET_STRIDE {
             return None;
@@ -165,7 +167,7 @@ impl Target {
                 bearing_deg: values[0],
                 range_m: values[1],
                 source_depth_m: values[2],
-                receiver_depth_m: 0.0,
+                receiver_depth_m,
                 relative_velocity_ms: values[6],
             },
             hydrophones,
@@ -186,9 +188,19 @@ impl Target {
         sample_rate: f32,
         hydrophones: &[[f32; 3]],
         max_delay_samples: usize,
+        receiver_depth_m: f32,
     ) -> Option<Self> {
         if values.len() < PROFILED_TARGET_V2_STRIDE {
             return None;
+        }
+        if values[7] == 0.0 {
+            return Self::new_merchant(
+                values,
+                sample_rate,
+                hydrophones,
+                max_delay_samples,
+                receiver_depth_m,
+            );
         }
         let profile = MerchantProfile::from_code(values[3] as u32)?;
         let mut source = merchant::source_spectrum(profile, values[4], values[5]);
@@ -202,7 +214,7 @@ impl Target {
                 bearing_deg: values[0],
                 range_m: values[1],
                 source_depth_m: values[2],
-                receiver_depth_m: 0.0,
+                receiver_depth_m,
                 relative_velocity_ms: values[6],
             },
             hydrophones,
@@ -226,6 +238,8 @@ impl Target {
 /// 상태 포함 — `process`는 블럭당 **1회만** 호출할 것 (채널 복사는 호스트가 담당).
 #[wasm_bindgen]
 pub struct DspEngine {
+    monitor: output::ListeningMonitor,
+    monitor_sample: f32,
     sample_rate: f32,
     t: f64,
     hydrophones: Vec<[f32; 3]>,
@@ -252,6 +266,8 @@ impl DspEngine {
             DEFAULT_FULL_SCALE_DB_RE_1UPA,
         );
         let mut engine = Self {
+            monitor: output::ListeningMonitor::new(sample_rate),
+            monitor_sample: 0.0,
             sample_rate,
             t: 0.0,
             hydrophones,
@@ -276,6 +292,7 @@ impl DspEngine {
                     self.sample_rate,
                     &self.hydrophones,
                     self.max_delay_samples,
+                    0.0,
                 ));
             }
         }
@@ -290,6 +307,7 @@ impl DspEngine {
                 self.sample_rate,
                 &self.hydrophones,
                 self.max_delay_samples,
+                0.0,
             ) {
                 self.targets.push(target);
             }
@@ -305,6 +323,39 @@ impl DspEngine {
                 self.sample_rate,
                 &self.hydrophones,
                 self.max_delay_samples,
+                0.0,
+            ) {
+                self.targets.push(target);
+            }
+        }
+    }
+
+    /// 월드 장면을 원자적으로 교체한다. 기존 두 형식의 배열과 명시적인 자함 수심을 받는다.
+    /// 위치를 적분하지 않는 정적 비교 장면용이며 호출 시 Source 히스토리를 새로 만든다.
+    pub fn set_world_scene(&mut self, legacy: &[f32], profiled_v2: &[f32], receiver_depth_m: f32) {
+        if !receiver_depth_m.is_finite() || receiver_depth_m < 0.0 {
+            return;
+        }
+        self.targets.clear();
+        self.bass = BassAnalyzer::new();
+        for chunk in legacy.chunks_exact(TARGET_STRIDE) {
+            if let Some(descriptor) = TargetDescriptor::from_flat(chunk) {
+                self.targets.push(Target::new(
+                    descriptor,
+                    self.sample_rate,
+                    &self.hydrophones,
+                    self.max_delay_samples,
+                    receiver_depth_m,
+                ));
+            }
+        }
+        for chunk in profiled_v2.chunks_exact(PROFILED_TARGET_V2_STRIDE) {
+            if let Some(target) = Target::new_merchant_v2(
+                chunk,
+                self.sample_rate,
+                &self.hydrophones,
+                self.max_delay_samples,
+                receiver_depth_m,
             ) {
                 self.targets.push(target);
             }
@@ -341,6 +392,15 @@ impl DspEngine {
     pub fn process(&mut self, out: &mut [f32]) {
         for sample in out {
             *sample = self.process_sample::<false>(None);
+        }
+    }
+
+    /// 원음과 청취 보조를 동일한 1회 상태 전진에서 출력한다.
+    pub fn process_with_monitor(&mut self, out: &mut [f32], monitor: &mut [f32]) {
+        assert_eq!(out.len(), monitor.len());
+        for (sample, listening) in out.iter_mut().zip(monitor) {
+            *sample = self.process_sample::<false>(None);
+            *listening = self.monitor_sample;
         }
     }
 }
@@ -393,6 +453,7 @@ impl DspEngine {
         self.bass
             .observe(|direction| receiver.beam_sample(direction));
         let output_fs = output::soft_limit(receiver_fs);
+        self.monitor_sample = self.monitor.sample(receiver_fs, t);
 
         if TRACE {
             let trace = trace.expect("TRACE=true requires a trace sample");

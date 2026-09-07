@@ -55,6 +55,12 @@ abstract class WaterfallDisplay {
     this.ctx.drawImage(this.history, 0, 0);
   }
 
+  clear(): void {
+    this.historyCtx.fillStyle = COLORS.abyss;
+    this.historyCtx.fillRect(0, 0, this.history.width, this.history.height);
+    this.paintHistory();
+  }
+
   protected verticalGrid(divisions: number, formatter: (index: number) => string): void {
     const { width, height } = this.canvas;
     this.ctx.save();

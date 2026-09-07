@@ -75,23 +75,15 @@ impl DelayAndSum {
     pub fn process_sample(&mut self, samples: &[f32], steer: [f32; 3]) -> f32 {
         let n = self.hydrophones.len();
         debug_assert_eq!(samples.len(), n);
-        let mut pmax = 0f32;
-        let mut dots = Vec::with_capacity(n);
-        for p in &self.hydrophones {
-            let d = beam_delay(*p, steer, self.sound_speed);
-            pmax = pmax.max(d);
-            dots.push(d);
+        if n == 0 {
+            return 0.0;
         }
-        let mut sum = 0f32;
-        for (h, &d) in dots.iter().enumerate() {
-            let delay_s = pmax - d; // ≥ 0
-            sum += self.read_delayed(h, delay_s * self.sample_rate);
-        }
+        let output = self.beam_sample(steer);
         for (h, s) in samples.iter().enumerate() {
             self.buffers[h][self.pos] = *s;
         }
         self.pos = (self.pos + 1) % self.buffers[0].len();
-        sum / n as f32
+        output
     }
 
     /// 현재 링 버퍼 상태를 전진시키지 않고 다른 방향의 빔을 읽는다.
@@ -104,31 +96,27 @@ impl DelayAndSum {
             return 0.0;
         }
         let mut pmax = 0f32;
-        let mut dots = Vec::with_capacity(n);
         for p in &self.hydrophones {
             let d = beam_delay(*p, steer, self.sound_speed);
             pmax = pmax.max(d);
-            dots.push(d);
         }
-        let sum = dots
+        let sum = self
+            .hydrophones
             .iter()
             .enumerate()
-            .map(|(h, &d)| self.read_delayed(h, (pmax - d) * self.sample_rate))
+            .map(|(h, &p)| {
+                self.read_delayed(
+                    h,
+                    (pmax - beam_delay(p, steer, self.sound_speed)) * self.sample_rate,
+                )
+            })
             .sum::<f32>();
         sum / n as f32
     }
 
     /// `delay_samples`만큼 과거의 샘플 (선형 보간 분수 지연).
     fn read_delayed(&self, h: usize, delay_samples: f32) -> f32 {
-        let cap = self.buffers[h].len();
-        let d = delay_samples.max(0.0).min(cap as f32 - 2.0);
-        let i = d.floor() as usize;
-        let frac = d - i as f32;
-        // 최신 샘플은 (pos − 1) mod cap
-        let newest = if self.pos == 0 { cap - 1 } else { self.pos - 1 };
-        let idx0 = newest.wrapping_sub(i) % cap;
-        let idx1 = newest.wrapping_sub(i + 1) % cap;
-        self.buffers[h][idx0] * (1.0 - frac) + self.buffers[h][idx1] * frac
+        crate::ring::read(&self.buffers[h], self.pos, delay_samples)
     }
 }
 

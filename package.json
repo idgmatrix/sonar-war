@@ -8,12 +8,14 @@
     "build": "tsc -b && vite build",
     "build:pages": "tsc -b && vite build --mode pages",
     "preview": "vite preview",
+    "preview:pages": "vite preview --mode pages",
     "test": "vitest run",
     "test:watch": "vitest",
     "dsp:render": "cargo run --release --manifest-path dsp-core/Cargo.toml --example render_scene --",
     "wasm:build": "wasm-pack build dsp-core --target web --out-dir pkg --dev",
     "wasm:build:release": "wasm-pack build dsp-core --target web --out-dir pkg --release",
-    "wasm:test": "cargo test --manifest-path dsp-core/Cargo.toml"
+    "wasm:test": "cargo test --manifest-path dsp-core/Cargo.toml",
+    "wasm:verify": "node --experimental-strip-types scripts/verify-wasm.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",

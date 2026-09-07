@@ -213,19 +213,11 @@ impl PropagationProcessor {
     }
 
     fn read_broadband(&self, offset_samples: f32) -> f32 {
-        let capacity = self.broadband_history_upa.len();
-        let offset = offset_samples.max(0.0).min(capacity as f32 - 2.0);
-        let whole = offset.floor() as usize;
-        let fraction = offset - whole as f32;
-        let newest = if self.broadband_history_position == 0 {
-            capacity - 1
-        } else {
-            self.broadband_history_position - 1
-        };
-        let first = newest.wrapping_sub(whole) % capacity;
-        let second = newest.wrapping_sub(whole + 1) % capacity;
-        self.broadband_history_upa[first] * (1.0 - fraction)
-            + self.broadband_history_upa[second] * fraction
+        crate::ring::read(
+            &self.broadband_history_upa,
+            self.broadband_history_position,
+            offset_samples,
+        )
     }
 
     /// Source 샘플을 전파해 재사용 `HydrophoneFrame`에 누적한다.

@@ -31,7 +31,11 @@
 
 `PropagationGeometry`는 소스와 수신기 수심을 각각 받아 수직 오프셋을 계산한다. 현재
 8-float WASM 장면 계약에는 자함 수심이 없으므로 호환 경로에서는 수신기 수심을 0 m로
-둔다. 월드 어댑터를 연결할 때 자함 수심을 명시적으로 전달하도록 계약을 확장한다.
+둔다. UI는 `sceneWorld.ts`의 World 어댑터를 통해
+`set_world_scene(legacy, profiled_v2, receiver_depth_m)`를 호출하여 자함 수심을 전달한다.
+두 종류의 표적을 한 번에 교체하며 v2 overlay_code=0은 광대역 전용 상선을 뜻한다.
+이 API는 Source 히스토리를 초기화하는 정적 비교 장면 전용이다. 이동 표적의 연속
+파라미터 갱신 API나 R/c 이력 재생으로 사용하지 않는다.
 
 저주파 측정 톤의 `level_reference`가 keel-aspect이면 자유수면 압력 해제 응답은
 Propagation에서만 적용한다. Arveson–Vendittis의 정의처럼 고각 `θ`는 수평 0°, keel
@@ -68,7 +72,14 @@ JOMOPANS 광대역에는 단일 선박에서 얻은 이 방향성을 적용하�
 
 `BassAnalyzer`는 배열의 최신 링 버퍼를 시간축 전진 없이 방위별로 읽고, 감산 주기·전력
 누산·dBFS 변환·윈도우 초기화를 소유한다. `output::soft_limit`는 주 조향 빔에만 적용되므로
-분석 입력을 변조하지 않는다. `DspEngine`은 두 경로의 실행 순서와 WASM 계약만 조율한다.
+분석 입력을 변조하지 않는다. BASS는 `ReceiverArray`가 샘플당 한 번 생성한 최신 주변
+소음 샘플을 주 빔과 공유한다. 현 단계는 C등급 방위 균일 수신점 잡음 근사이며, 잡음의
+공간 공분산이나 배열 지향성 이득은 모델링하지 않는다. BASS 스캔이 RNG를 전진시키지 않는다.
+
+`process_with_monitor(raw, monitor)`는 같은 1회 상태 전진에서 원음과 선택적 청취 보조를
+출력한다. raw는 기존 `process`와 동일하며 LOFAR는 raw만 관측한다. monitor는 Output
+계층에서만 2–120 Hz 차분 저역 필터와 240 Hz 양측파대 변조를 적용한다(C등급).
+원시 Source/Propagation/Receiver와 BASS에는 이 보조 처리를 적용하지 않는다.
 
 네이티브 전용 `process_traced`는 같은 내부 샘플 함수를 호출하면서 Source 1 m의 전체·
 토널·광대역 음압, 첫 하이드로폰 음압, 제한 전 수신기 FS, 최종 출력 FS를 기록한다.

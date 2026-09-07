@@ -12,7 +12,7 @@
       <header class="command-header">
         <div>
           <h1>SSN-X BLACKTIDE</h1>
-          <p class="sub">Passive sonar control · M3 display integration</p>
+          <p class="sub">Passive sonar · 정적 음향 비교 장면</p>
         </div>
         <button id="start" class="btn start">Start sonar</button>
       </header>
@@ -52,16 +52,17 @@
         </label>
         <label>
           <span>Beam elevation <output id="elevation-value">+0°</output></span>
-          <input id="elevation" type="range" min="-60" max="60" step="1" value="0" />
+          <input id="elevation" type="range" min="-60" max="60" step="0.01" value="0" />
         </label>
         <label>
           <span>Harmonic ruler</span>
-          <input id="harmonic" type="range" min="1" max="100" step="0.5" value="10" />
+          <input id="harmonic" type="range" min="1" max="100" step="0.001" value="10" />
         </label>
       </section>
 
       <footer class="scene-deck">
-        <span>Acoustic test scene</span>
+        <span>Acoustic test scene · 접근/이탈은 ±50 m/s 강조 데모</span>
+        <label><input id="listening-aid" type="checkbox" /> 청취 보조 — 저주파를 240 Hz 변조음으로 듣기 (LOFAR는 원음)</label>
         <div class="scene-buttons">
           <button id="scene-demo" class="btn small">Three contacts</button>
           <button id="scene-approach" class="btn small">Approaching</button>

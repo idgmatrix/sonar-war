@@ -2,6 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { AcousticEntity } from '../src/core/entity/acousticEntity.ts';
 
 describe('AcousticEntity 직렬화 (M0 완료 기준)', () => {
+  it('RPM 변경과 잘못된 파생값 복원에서도 bladeRate 불변식을 유지한다', () => {
+    const entity = new AcousticEntity('target');
+    entity.rpm = 120;
+    expect(entity.bladeRate).toBe(14);
+    const payload = entity.exportState();
+    payload.bladeRate = 999;
+    entity.importState(payload);
+    expect(entity.bladeRate).toBe(14);
+    expect(AcousticEntity.fromSnapshot({ ...entity.snapshot(), bladeRate: 999 }).bladeRate).toBe(14);
+  });
   it('exportState → importState 왕복이 상태를 보존한다', () => {
     const a = new AcousticEntity('sub-1', 'sub');
     a.position = [1234.5, 250.0, -777.25];
@@ -13,7 +23,6 @@ describe('AcousticEntity 직렬화 (M0 완료 기준)', () => {
     a.setBladeCount(5);
     a.cavitation = 0.67;
     a.tonals = [50, 100, 150, 200];
-    a.bladeRate = 16.5;
     a.sourceLevels = { broadband: 155, tonal: [130, 120, 110, 100] };
     a.towedArrayDeployed = true;
 

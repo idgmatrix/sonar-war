@@ -25,6 +25,7 @@ pub struct ReceiverVoiceParameters {
 pub struct ReceiverArray {
     array: DelayAndSum,
     ambient: OceanNoise,
+    ambient_sample: f32,
     pressure_to_full_scale: f32,
     full_scale_frame: Vec<f32>,
 }
@@ -40,6 +41,7 @@ impl ReceiverArray {
         Self {
             array: DelayAndSum::new(hydrophones, sound_speed_ms, sample_rate),
             ambient: OceanNoise::new(sample_rate, 5.0, 0.0),
+            ambient_sample: 0.0,
             pressure_to_full_scale: 10f32.powf(-full_scale_db_re_1upa / 20.0),
             full_scale_frame: vec![0.0; hydrophone_count],
         }
@@ -47,6 +49,7 @@ impl ReceiverArray {
 
     pub fn set_ocean(&mut self, sample_rate: f32, wind_speed_ms: f32, rain_mm_hr: f32) {
         self.ambient = OceanNoise::new(sample_rate, wind_speed_ms, rain_mm_hr);
+        self.ambient_sample = 0.0;
     }
 
     /// 배열 신호만 처리한다. 주변 소음과 출력 제한은 포함하지 않는다.
@@ -62,11 +65,15 @@ impl ReceiverArray {
     /// 배열 출력에 수신점 주변 소음을 합성한다.
     #[inline]
     pub fn process_frame(&mut self, frame: &HydrophoneFrame, steer: [f32; 3]) -> f32 {
-        self.process_signal_frame(frame, steer) + self.ambient.next_sample()
+        let signal = self.process_signal_frame(frame, steer);
+        self.ambient_sample = self.ambient.next_sample();
+        signal + self.ambient_sample
     }
 
     pub fn beam_sample(&self, steer: [f32; 3]) -> f32 {
-        self.array.beam_sample(steer)
+        // C등급 방위 균일 수신점 잡음 근사. 동일 시각의 잡음을 읽으며 RNG를 전진시키지 않는다.
+        // 하이드로폰별 공간 공분산/방위별 독립 잡음을 재현하는 모델은 아니다.
+        self.array.beam_sample(steer) + self.ambient_sample
     }
 }
 

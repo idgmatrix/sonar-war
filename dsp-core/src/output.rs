@@ -8,6 +8,33 @@ pub fn soft_limit(sample: f32) -> f32 {
     sample.tanh()
 }
 
+/// C등급 청취 보조: 2–120 Hz 성분을 240 Hz 반송파로 양측파대 변조한다.
+/// 원시 센서/LOFAR 신호는 보존한다. 실제 수중 소리나 단측파대 주파수 이동이 아니다.
+pub struct ListeningMonitor {
+    low: f32,
+    dc: f32,
+    low_alpha: f32,
+    dc_alpha: f32,
+}
+
+impl ListeningMonitor {
+    pub fn new(sample_rate: f32) -> Self {
+        Self {
+            low: 0.0,
+            dc: 0.0,
+            low_alpha: 1.0 - (-2.0 * std::f32::consts::PI * 120.0 / sample_rate).exp(),
+            dc_alpha: 1.0 - (-2.0 * std::f32::consts::PI * 2.0 / sample_rate).exp(),
+        }
+    }
+    pub fn sample(&mut self, input: f32, time: f64) -> f32 {
+        self.low += self.low_alpha * (input - self.low);
+        self.dc += self.dc_alpha * (input - self.dc);
+        soft_limit(
+            2.0 * (self.low - self.dc) * (2.0 * std::f64::consts::PI * 240.0 * time).cos() as f32,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

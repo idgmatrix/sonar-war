@@ -9,7 +9,7 @@
  * 좌표계: x (동), depth (+하향), z (남). 단위: m.
  */
 
-import type { SourceProfileId } from '../../dsp/sourceProfiles.ts';
+import type { SourceProfileId, MerchantTonalOverlayId } from '../../dsp/sourceProfiles.ts';
 
 export type EntityKind = 'sub' | 'surface' | 'torpedo' | 'decoy';
 
@@ -25,6 +25,7 @@ export interface AcousticEntityState {
   /** 스크루 회전수 (RPM) */
   rpm: number;
   sourceProfileId: SourceProfileId;
+  tonalOverlayId?: MerchantTonalOverlayId;
   lengthM: number;
   bladeCount: number;
   /** 0~1 광대역 캐비테이션 레벨 */
@@ -49,6 +50,7 @@ export interface AcousticEntityPayload {
   spd: number; // m/s (스칼라, 검증/디버깅용)
   rpm: number;
   profile: SourceProfileId;
+  tonalOverlayId?: MerchantTonalOverlayId;
   lengthM: number;
   blades: number;
   cav: number;
@@ -66,11 +68,12 @@ export class AcousticEntity {
   heading: number;
   rpm: number;
   sourceProfileId: SourceProfileId;
+  tonalOverlayId?: MerchantTonalOverlayId;
   lengthM: number;
   bladeCount: number;
   cavitation: number;
   tonals: number[];
-  bladeRate: number;
+  get bladeRate(): number { return this.rpm * this.bladeCount / 60; }
   sourceLevels: { broadband: number; tonal: number[] };
   towedArrayDeployed: boolean;
 
@@ -86,7 +89,6 @@ export class AcousticEntity {
     this.bladeCount = 7;
     this.cavitation = 0.0;
     this.tonals = [60, 120, 180];
-    this.bladeRate = (90 * 7) / 60; // 7엽 스크루 기준
     this.sourceLevels = { broadband: 150, tonal: [120, 110, 100] };
     this.towedArrayDeployed = false;
   }
@@ -94,7 +96,6 @@ export class AcousticEntity {
   /** 스크루 엽수 변경 시 bladeRate 재계산 */
   setBladeCount(count: number): void {
     this.bladeCount = count;
-    this.bladeRate = (this.rpm * count) / 60;
   }
 
   /** 네트워크/AI로 보낼 압축 상태 추출 */
@@ -107,6 +108,7 @@ export class AcousticEntity {
       spd,
       rpm: this.rpm,
       profile: this.sourceProfileId,
+      tonalOverlayId: this.tonalOverlayId,
       lengthM: this.lengthM,
       blades: this.bladeCount,
       cav: this.cavitation,
@@ -124,11 +126,11 @@ export class AcousticEntity {
     this.heading = data.hdg;
     this.rpm = data.rpm;
     this.sourceProfileId = data.profile;
+    this.tonalOverlayId = data.tonalOverlayId;
     this.lengthM = data.lengthM;
     this.bladeCount = data.blades;
     this.cavitation = data.cav;
     this.tonals = [...data.tonals];
-    this.bladeRate = data.bladeRate;
     this.sourceLevels = { broadband: data.sl.bb, tonal: [...data.sl.tn] };
     this.towedArrayDeployed = data.towed;
   }
@@ -143,6 +145,7 @@ export class AcousticEntity {
       heading: this.heading,
       rpm: this.rpm,
       sourceProfileId: this.sourceProfileId,
+      tonalOverlayId: this.tonalOverlayId,
       lengthM: this.lengthM,
       bladeCount: this.bladeCount,
       cavitation: this.cavitation,
@@ -163,11 +166,11 @@ export class AcousticEntity {
     e.heading = s.heading;
     e.rpm = s.rpm;
     e.sourceProfileId = s.sourceProfileId;
+    e.tonalOverlayId = s.tonalOverlayId;
     e.lengthM = s.lengthM;
     e.bladeCount = s.bladeCount;
     e.cavitation = s.cavitation;
     e.tonals = [...s.tonals];
-    e.bladeRate = s.bladeRate;
     e.sourceLevels = {
       broadband: s.sourceLevels.broadband,
       tonal: [...s.sourceLevels.tonal],

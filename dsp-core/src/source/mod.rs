@@ -197,6 +197,9 @@ impl SourceVoice {
     /// 광대역 히스토리 오프셋은 Propagation이 계산하며 Source는 그 의미를 해석하지 않는다.
     pub fn sample_at(&self, source_time_s: f64, broadband_history_offset: f32) -> SourceSample {
         let tonal_pressure_1m_upa = std::array::from_fn(|index| {
+            if self.tonal_amplitude_1m_upa[index] == 0.0 {
+                return 0.0;
+            }
             let frequency_hz = self.spectrum.tonal_lines[index].frequency_hz as f64;
             self.tonal_amplitude_1m_upa[index]
                 * (2.0 * std::f64::consts::PI * frequency_hz * source_time_s).cos() as f32
@@ -229,18 +232,7 @@ impl SourceVoice {
     }
 
     fn read_noise(&self, offset_samples: f32) -> f32 {
-        let capacity = self.noise_history.len();
-        let offset = offset_samples.max(0.0).min(capacity as f32 - 2.0);
-        let whole = offset.floor() as usize;
-        let fraction = offset - whole as f32;
-        let newest = if self.noise_position == 0 {
-            capacity - 1
-        } else {
-            self.noise_position - 1
-        };
-        let first = newest.wrapping_sub(whole) % capacity;
-        let second = newest.wrapping_sub(whole + 1) % capacity;
-        self.noise_history[first] * (1.0 - fraction) + self.noise_history[second] * fraction
+        crate::ring::read(&self.noise_history, self.noise_position, offset_samples)
     }
 }
 
